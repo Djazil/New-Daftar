@@ -362,32 +362,6 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                 </svg>
                 <span>تسجيل الدخول بحساب Google للأستاذ</span>
               </button>
-
-              {/* عروض اشتراكات الأساتذة المختصرة بالدينار الجزائري DZD */}
-              <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800 space-y-1.5 text-[11px]">
-                <div className="flex items-center justify-between text-slate-300 font-bold">
-                  <span>عروض اشتراك الأستاذ (DZD):</span>
-                  <span className="text-emerald-400">تفعيل عبر بريدي موب</span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
-                  <div className="bg-slate-900 p-1.5 rounded-lg border border-slate-800 flex justify-between">
-                    <span className="text-slate-400 font-sans">شهر واحد:</span>
-                    <strong className="text-white">800 دج</strong>
-                  </div>
-                  <div className="bg-slate-900 p-1.5 rounded-lg border border-slate-800 flex justify-between">
-                    <span className="text-slate-400 font-sans">6 أشهر:</span>
-                    <strong className="text-white">3,000 دج</strong>
-                  </div>
-                  <div className="bg-slate-900 p-1.5 rounded-lg border border-slate-800 flex justify-between">
-                    <span className="text-slate-400 font-sans">سنة كاملة:</span>
-                    <strong className="text-emerald-400">5,000 دج</strong>
-                  </div>
-                  <div className="bg-slate-900 p-1.5 rounded-lg border border-slate-800 flex justify-between">
-                    <span className="text-slate-400 font-sans">مدى الحياة:</span>
-                    <strong className="text-cyan-400">10,000 دج</strong>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div className="pt-4 border-t border-slate-800/80 mt-4 flex items-center justify-between text-[11px] text-slate-400">

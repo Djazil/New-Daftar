@@ -223,72 +223,7 @@ export default function TeacherSubscriptionPage({
           </div>
         )}
 
-        {/* 1. قائمة الأسعار */}
-        <section className="space-y-4">
-          <div className="text-center max-w-xl mx-auto space-y-1.5">
-            <h2 className="text-xl sm:text-2xl font-black text-white">قائمة عروض الاشتراك</h2>
-            <p className="text-xs text-slate-400">
-              اختر المدة المناسبة لعملك اليومي كأستاذ في الطور الثانوي (بالدينار الجزائري DZD)
-            </p>
-          </div>
 
-          {/* بطاقات أسعار بسيطة وأنيقة تحتوي فقط على: اسم الاشتراك، مدته، وسعره */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
-            {SUBSCRIPTION_TIERS.map(tier => {
-              const isSelected = selectedPlanId === tier.id;
-              return (
-                <div
-                  key={tier.id}
-                  onClick={() => setSelectedPlanId(tier.id)}
-                  className={`rounded-2xl p-5 border transition cursor-pointer flex flex-col justify-between space-y-4 ${
-                    isSelected
-                      ? 'bg-slate-900 border-emerald-500 ring-2 ring-emerald-500/30 shadow-lg shadow-emerald-500/10'
-                      : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-black text-white">{tier.name}</span>
-                      {isSelected && (
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 font-normal">{tier.durationLabel}</p>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 space-y-3">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-emerald-400 font-mono tracking-tight">
-                        {tier.priceDZD.toLocaleString()}
-                      </span>
-                      <span className="text-xs font-bold text-slate-300 font-sans">دج</span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedPlanId(tier.id);
-                        document.getElementById('activation-form')?.scrollIntoView({ behavior: 'smooth' });
-                      }}
-                      className={`w-full py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                        isSelected
-                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/30'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700'
-                      }`}
-                    >
-                      {isSelected ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Sparkles className="w-3.5 h-3.5 text-amber-400" />}
-                      <span>{isSelected ? 'تم تحديد هذا العرض ✓' : 'تحديد العرض للتفعيل'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-center text-[11px] text-slate-400">
-            * اضغط على زر «تحديد العرض للتفعيل» للانتقال المباشر لنموذج تأكيد الدفع وإرسال طلب التفعيل عبر واتساب.
-          </p>
-        </section>
 
         {/* 2. طريقة الدفع وتأكيده */}
         <section className="bg-slate-900/80 rounded-3xl border border-slate-800 p-6 sm:p-7 space-y-5 shadow-xl">
@@ -334,7 +269,7 @@ export default function TeacherSubscriptionPage({
               <ol className="space-y-1.5 text-slate-400 list-decimal list-inside leading-relaxed">
                 <li>افتح تطبيق بريدي موب (BaridiMob) في هاتفك.</li>
                 <li>اختر تحويل الأموال وأدخل رقم RIP الموضح.</li>
-                <li>أدخل المبلغ المطلوب: <strong className="text-emerald-400 font-mono">{selectedTier.priceDZD} دج</strong>.</li>
+                <li>أدخل مبلغ الحوالة البريدية وحول الأموال.</li>
                 <li>احتفظ بصورة وصل الدفع أو لقطة الشاشة للعملية.</li>
               </ol>
             </div>
@@ -355,7 +290,7 @@ export default function TeacherSubscriptionPage({
 
               {/* زر واتساب الواضح */}
               <a
-                href={createWhatsAppDirectReceiptLink(selectedTier.name, selectedTier.priceDZD)}
+                href={createWhatsAppDirectReceiptLink(selectedTier.name)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="py-3 px-5 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 transition shadow-lg shadow-[#25D366]/20 cursor-pointer shrink-0"
@@ -399,7 +334,7 @@ export default function TeacherSubscriptionPage({
 
               <div className="pt-2 border-t border-emerald-500/30">
                 <a
-                  href={whatsAppDirectUrl || createWhatsAppDirectReceiptLink(selectedTier.name, selectedTier.priceDZD)}
+                  href={whatsAppDirectUrl || createWhatsAppDirectReceiptLink(selectedTier.name)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="py-3.5 px-6 rounded-2xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition shadow-xl shadow-[#25D366]/30 cursor-pointer w-full text-center"
@@ -446,9 +381,6 @@ export default function TeacherSubscriptionPage({
                       />
                       <span className="font-bold text-slate-200">{tier.name}</span>
                     </div>
-                    <span className="font-mono font-black text-emerald-400 text-sm">
-                      {tier.priceDZD} دج
-                    </span>
                   </label>
                 ))}
               </div>
