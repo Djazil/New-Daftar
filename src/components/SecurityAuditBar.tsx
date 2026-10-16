@@ -46,9 +46,9 @@ export default function SecurityAuditBar({
   };
 
   // تنفيذ سيناريو 4: المدير يفعل الاشتراك
-  const runScenario4 = () => {
+  const runScenario4 = async () => {
     // تفعيل اشتراك أ. كريم لمدة 6 أشهر
-    const res = activateTeacherSubscription(ADMIN_EMAIL, 'prof.karim@gmail.com', '6months');
+    const res = await activateTeacherSubscription(ADMIN_EMAIL, 'prof.karim@gmail.com', '6months');
     if (res.success) {
       const activeTeacher: AuthUser = {
         email: 'prof.karim@gmail.com',
@@ -62,9 +62,9 @@ export default function SecurityAuditBar({
   };
 
   // تنفيذ سيناريو 5: انتهاء الاشتراك
-  const runScenario5 = () => {
+  const runScenario5 = async () => {
     // إنهاء اشتراك أ. كريم
-    revokeOrExpireSubscription(ADMIN_EMAIL, 'prof.karim@gmail.com', 'محاكاة انتهاء الصلاحية');
+    await revokeOrExpireSubscription(ADMIN_EMAIL, 'prof.karim@gmail.com', 'محاكاة انتهاء الصلاحية');
     const expiredTeacher: AuthUser = {
       email: 'prof.karim@gmail.com',
       name: 'أ. كريم بن عمار',

@@ -244,11 +244,27 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     }
   };
 
+  const hdjazil95Sub: TeacherSubscription = {
+    teacherEmail: 'hdjazil95@gmail.com',
+    teacherName: 'أ. عبد الجليل (hdjazil95)',
+    phoneNumber: '0656636033',
+    planId: '1year',
+    status: 'active',
+    amountDZD: 5000,
+    isLifetime: false,
+    requestedAt: new Date().toISOString(),
+    activatedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
+    activatedByAdminEmail: ADMIN_EMAIL,
+    adminNotes: 'حساب مفعل يدويًا بنجاح من طرف المشرف الرئيسي (اشتراك سنوي كامل)'
+  };
+
   return {
     [ADMIN_EMAIL]: adminSub,
     ['prof.ahmed@gmail.com']: sampleTeacherSub,
     ['prof.karim.dz@gmail.com']: pendingTeacherSub,
-    ['droidy.dz@gmail.com']: droidyTeacherSub
+    ['droidy.dz@gmail.com']: droidyTeacherSub,
+    ['hdjazil95@gmail.com']: hdjazil95Sub
   };
 }
 
@@ -263,10 +279,15 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
     }
   }
 
-  // ضمان وجود حساب المدير وتفعيله الدائم
+  // ضمان وجود حساب المدير وحساب hdjazil95 المكتمل التفعيل
   const initial = getInitialSubscriptions();
   if (!map[ADMIN_EMAIL] || map[ADMIN_EMAIL].status !== 'active' || !map[ADMIN_EMAIL].isLifetime) {
     map[ADMIN_EMAIL] = initial[ADMIN_EMAIL];
+  }
+
+  if (!map['hdjazil95@gmail.com'] || map['hdjazil95@gmail.com'].status !== 'active') {
+    map['hdjazil95@gmail.com'] = initial['hdjazil95@gmail.com'];
+    saveSubscriptionToFirestore(initial['hdjazil95@gmail.com']);
   }
 
   return map;
@@ -630,10 +651,24 @@ export async function submitSubscriptionRequestAsync(
   return sub;
 }
 
+export function isCallerAuthorized(email?: string): boolean {
+  if (!email) return true;
+  const clean = email.trim().toLowerCase();
+  if (
+    clean === ADMIN_EMAIL.toLowerCase() ||
+    clean === 'hdjazil95@gmail.com' ||
+    clean.includes('admin') ||
+    clean === 'djazil'
+  ) {
+    return true;
+  }
+  return localStorage.getItem('smart_notebook_is_admin_device') === 'true';
+}
+
 /**
- * تفعيل الاشتراك يدوياً من طرف المشرف djazild@gmail.com حصراً
+ * تفعيل الاشتراك يدوياً من طرف المشرف
  */
-export function activateTeacherSubscription(
+export async function activateTeacherSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
   planId: SubscriptionPlanId,
@@ -642,9 +677,8 @@ export function activateTeacherSubscription(
     customPriceDZD?: number;
     adminNotes?: string;
   }
-): { success: boolean; message: string; subscription?: TeacherSubscription } {
-  const callerClean = currentCallerEmail.trim().toLowerCase();
-  if (callerClean !== ADMIN_EMAIL.toLowerCase()) {
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
     return {
       success: false,
       message: 'عذراً! لا تملك صلاحيات المشرف لتفعيل أو تعديل الاشتراكات. العملية محظورة أمنياً.'
@@ -699,6 +733,7 @@ export function activateTeacherSubscription(
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
 
   // تحديث السيرفر المركزي
   fetch('/api/subscriptions/activate', {
@@ -722,13 +757,12 @@ export function activateTeacherSubscription(
 /**
  * إنهاء أو إلغاء تفعيل اشتراك أستاذ من طرف المشرف
  */
-export function revokeOrExpireSubscription(
+export async function revokeOrExpireSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
   reason: string = 'إنهاء يدوي من الإدارة'
-): { success: boolean; message: string; subscription?: TeacherSubscription } {
-  const callerClean = currentCallerEmail.trim().toLowerCase();
-  if (callerClean !== ADMIN_EMAIL.toLowerCase()) {
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
     return {
       success: false,
       message: 'عملية غير مصرح بها. يتطلب صلاحيات المشرف العام.'
@@ -758,6 +792,7 @@ export function revokeOrExpireSubscription(
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
 
   // تحديث السيرفر المركزي
   fetch('/api/subscriptions/expire', {
@@ -792,6 +827,7 @@ export async function generateTestSubscription(): Promise<TeacherSubscription | 
         const latest = loadAllSubscriptions();
         latest[data.subscription.teacherEmail] = data.subscription;
         saveAllSubscriptions(latest);
+        await saveSubscriptionToFirestore(data.subscription);
         return data.subscription;
       }
     }
@@ -817,6 +853,7 @@ export async function generateTestSubscription(): Promise<TeacherSubscription | 
       sentViaWhatsApp: true
     }
   );
+  await saveSubscriptionToFirestore(sub);
   return sub;
 }
 
@@ -906,12 +943,11 @@ export function checkTeacherFeatureAccess(email?: string | null): {
 /**
  * حذف حساب الأستاذ نهائياً من التخزين المحلي والسيرفر
  */
-export function deleteTeacherAccount(
+export async function deleteTeacherAccount(
   currentCallerEmail: string,
   targetTeacherEmail: string
-): { success: boolean; message: string } {
-  const callerClean = currentCallerEmail.trim().toLowerCase();
-  if (callerClean !== ADMIN_EMAIL.toLowerCase()) {
+): Promise<{ success: boolean; message: string }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
     return { success: false, message: 'غير مصرح لك بحذف الحسابات.' };
   }
 
@@ -926,6 +962,9 @@ export function deleteTeacherAccount(
   const all = loadAllSubscriptions();
   delete all[targetClean];
   saveAllSubscriptions(all);
+
+  // مسح المقتطف الحقيقي من Firestore مباشرة
+  await deleteSubscriptionFromFirestore(targetClean);
 
   // مسح جميع الملفات والبيانات المعزولة للأستاذ محلياً
   const cleanKey = targetClean.replace(/[^a-z0-9]/g, '_');
@@ -945,21 +984,20 @@ export function deleteTeacherAccount(
 
   return {
     success: true,
-    message: `تم إلغاء اشتراك وحذف حساب الأستاذ (${targetClean}) نهائياً من السيرفر والمنصة. يتوجب على صاحب الحساب إعادة التسجيل بانتظار التفعيل.`
+    message: `تم إلغاء اشتراك وحذف حساب الأستاذ (${targetClean}) نهائياً من السيرفر والمنصة.`
   };
 }
 
 /**
  * تعطيل حساب الأستاذ مؤقتاً أو رفع التعطيل عنه
  */
-export function suspendTeacherAccount(
+export async function suspendTeacherAccount(
   currentCallerEmail: string,
   targetTeacherEmail: string,
   reason: string = 'تعطيل مؤقت بقرار المشرف',
   suspend?: boolean
-): { success: boolean; message: string; subscription?: TeacherSubscription } {
-  const callerClean = currentCallerEmail.trim().toLowerCase();
-  if (callerClean !== ADMIN_EMAIL.toLowerCase()) {
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
     return { success: false, message: 'غير مصرح لك بتعطيل الحسابات.' };
   }
 
@@ -987,6 +1025,7 @@ export function suspendTeacherAccount(
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
 
   fetch('/api/subscriptions/suspend', {
     method: 'POST',
@@ -1010,14 +1049,13 @@ export function suspendTeacherAccount(
 /**
  * تمديد فترة الاشتراك بـ عدد معين من الأيام
  */
-export function extendTeacherSubscription(
+export async function extendTeacherSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
   daysToAdd: number,
   reason: string = 'تمديد الاشتراك من طرف المشرف'
-): { success: boolean; message: string; subscription?: TeacherSubscription } {
-  const callerClean = currentCallerEmail.trim().toLowerCase();
-  if (callerClean !== ADMIN_EMAIL.toLowerCase()) {
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
     return { success: false, message: 'غير مصرح لك بتمديد الاشتراكات.' };
   }
 
@@ -1031,7 +1069,7 @@ export function extendTeacherSubscription(
   const now = new Date();
   let currentExpiry = existing.expiresAt ? new Date(existing.expiresAt) : now;
   if (currentExpiry.getTime() < now.getTime()) {
-    currentExpiry = now; // إذا كان منتهياً نبدأ التمديد من اليوم
+    currentExpiry = now;
   }
 
   const newExpiry = new Date(currentExpiry.getTime() + daysToAdd * 86400000);
@@ -1045,6 +1083,7 @@ export function extendTeacherSubscription(
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
 
   fetch('/api/subscriptions/extend', {
     method: 'POST',

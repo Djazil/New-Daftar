@@ -584,12 +584,26 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                   <button
                     type="button"
                     onClick={() => {
+                      setCustomEmail('hdjazil95@gmail.com');
+                      setCustomName('أ. عبد الجليل (hdjazil95)');
+                    }}
+                    className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-right text-[11px] transition col-span-2"
+                  >
+                    <strong className="block text-white flex items-center justify-between">
+                      <span>أ. عبد الجليل (حساب مفعل جاهز)</span>
+                      <span className="text-[10px] bg-emerald-900/60 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40">مفعل 1 سنة</span>
+                    </strong>
+                    <span className="text-[10px] text-slate-400 font-mono">hdjazil95@gmail.com</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setCustomEmail('prof.karim.dz@gmail.com');
                       setCustomName('أ. كريم المنصوري');
                     }}
                     className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-amber-500/30 text-amber-300 text-right text-[11px] transition"
                   >
-                    <strong className="block text-white">أ. كريم (طلب قيد المراجعة)</strong>
+                    <strong className="block text-white">أ. كريم (قيد المراجعة)</strong>
                     <span className="text-[10px] text-slate-400 font-mono">prof.karim.dz@gmail.com</span>
                   </button>
                   <button
@@ -601,8 +615,8 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                     }}
                     className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-blue-500/30 text-blue-300 text-right text-[11px] transition"
                   >
-                    <strong className="block text-white">حساب أستاذ جديد تماماً</strong>
-                    <span className="text-[10px] text-slate-400">لاختبار طلب الاشتراك والتفعيل</span>
+                    <strong className="block text-white">حساب أستاذ جديد</strong>
+                    <span className="text-[10px] text-slate-400">لاختبار الطلب والتفعيل</span>
                   </button>
                 </div>
               </div>

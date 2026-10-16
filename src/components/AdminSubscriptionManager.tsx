@@ -159,52 +159,52 @@ export default function AdminSubscriptionManager({
   });
 
   // معالجة التفعيل السريع
-  const handleQuickActivate = (teacherEmail: string, planId: SubscriptionPlanId) => {
-    const res = activateTeacherSubscription(currentUser.email, teacherEmail, planId);
+  const handleQuickActivate = async (teacherEmail: string, planId: SubscriptionPlanId) => {
+    const res = await activateTeacherSubscription(currentUser.email, teacherEmail, planId);
     if (res.success) {
       showToast(res.message, 'success');
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة إلغاء التفعيل / إنهاء الصلاحية
-  const handleExpire = (teacherEmail: string) => {
+  const handleExpire = async (teacherEmail: string) => {
     if (teacherEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
       showToast('لا يمكن إنهاء اشتراك حساب المشرف العام djazild@gmail.com!', 'error');
       return;
     }
-    const res = revokeOrExpireSubscription(currentUser.email, teacherEmail, 'تم إنهاء الصلاحية من لوحة المشرف');
+    const res = await revokeOrExpireSubscription(currentUser.email, teacherEmail, 'تم إنهاء الصلاحية من لوحة المشرف');
     if (res.success) {
       showToast(res.message, 'success');
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة الحذف النهائي الحقيقي من السيرفر والداتا
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!subToDelete) return;
-    const res = deleteTeacherAccount(currentUser.email, subToDelete.teacherEmail);
+    const res = await deleteTeacherAccount(currentUser.email, subToDelete.teacherEmail);
     if (res.success) {
       showToast(res.message, 'success');
       setSubToDelete(null);
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة التعطيل / إيقاف التنشيط المؤقت
-  const handleToggleSuspend = (sub: TeacherSubscription) => {
+  const handleToggleSuspend = async (sub: TeacherSubscription) => {
     if (sub.teacherEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
       showToast('لا يمكن تعطيل حساب المشرف العام!', 'error');
       return;
     }
     const isCurrentlySuspended = sub.status === 'suspended';
-    const res = suspendTeacherAccount(
+    const res = await suspendTeacherAccount(
       currentUser.email,
       sub.teacherEmail,
       isCurrentlySuspended ? 'إلغاء التعطيل وتنشيط الحساب' : 'تعطيل مؤقت بقرار من المشرف',
@@ -212,21 +212,21 @@ export default function AdminSubscriptionManager({
     );
     if (res.success) {
       showToast(res.message, 'success');
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة تمديد فترة الاشتراك
-  const handleConfirmExtend = (e: React.FormEvent) => {
+  const handleConfirmExtend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subToExtend) return;
     if (extendDaysInput <= 0) {
       showToast('يرجى تحديد عدد أيام صالح موجب للتمديد', 'error');
       return;
     }
-    const res = extendTeacherSubscription(
+    const res = await extendTeacherSubscription(
       currentUser.email,
       subToExtend.teacherEmail,
       extendDaysInput,
@@ -237,18 +237,18 @@ export default function AdminSubscriptionManager({
       setSubToExtend(null);
       setExtendDaysInput(30);
       setExtendReasonInput('');
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة حفظ التخصيص
-  const handleSaveCustomActivation = (e: React.FormEvent) => {
+  const handleSaveCustomActivation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSubForEdit) return;
 
-    const res = activateTeacherSubscription(
+    const res = await activateTeacherSubscription(
       currentUser.email,
       selectedSubForEdit.teacherEmail,
       customPlan,
@@ -262,14 +262,14 @@ export default function AdminSubscriptionManager({
     if (res.success) {
       showToast(res.message, 'success');
       setSelectedSubForEdit(null);
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
   };
 
   // معالجة إضافة أستاذ جديد من طرف المشرف
-  const handleAddNewTeacherSubmit = (e: React.FormEvent) => {
+  const handleAddNewTeacherSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = newTeacherEmail.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -277,7 +277,7 @@ export default function AdminSubscriptionManager({
       return;
     }
 
-    const res = activateTeacherSubscription(currentUser.email, cleanEmail, newTeacherPlan, {
+    const res = await activateTeacherSubscription(currentUser.email, cleanEmail, newTeacherPlan, {
       adminNotes: `تم الإنشاء والتفعيل يدوياً من طرف المشرف الرئيسي للأستاذ: ${newTeacherName || cleanEmail}`
     });
 
@@ -292,7 +292,7 @@ export default function AdminSubscriptionManager({
       setShowAddNewTeacherModal(false);
       setNewTeacherEmail('');
       setNewTeacherName('');
-      reloadData();
+      await reloadData();
     } else {
       showToast(res.message, 'error');
     }
