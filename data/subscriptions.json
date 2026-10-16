@@ -1,0 +1,34 @@
+{
+  "droidy.dz@gmail.com": {
+    "teacherEmail": "droidy.dz@gmail.com",
+    "teacherName": "أ. droidy.dz",
+    "planId": "6months",
+    "status": "pending",
+    "amountDZD": 3000,
+    "requestedAt": "2026-10-15T11:34:00.000Z",
+    "expiresAt": null,
+    "isLifetime": false,
+    "adminNotes": "حساب أستاذ مسجل عبر Google - بانتظار التفعيل من طرف المشرف"
+  },
+  "prof.test8618@gmail.com": {
+    "teacherEmail": "prof.test8618@gmail.com",
+    "teacherName": "أ. تجريبي (8618)",
+    "phoneNumber": "06558618",
+    "planId": "6months",
+    "status": "pending",
+    "amountDZD": 3000,
+    "requestedAt": "2026-10-15T11:33:37.671Z",
+    "expiresAt": null,
+    "isLifetime": false,
+    "paymentProof": {
+      "transactionRef": "BM-2026-8618",
+      "senderName": "أ. تجريبي (8618)",
+      "phoneNumber": "06558618",
+      "ripNumber": "007 99999 0023456789 25",
+      "amount": 3000,
+      "paidAt": "2026-10-15T11:33:37.671Z",
+      "receiptNote": "طلب اشتراك جديد عبر Google وبريدي موب لاختبار اللوحة",
+      "sentViaWhatsApp": true
+    }
+  }
+}
