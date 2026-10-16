@@ -134,17 +134,11 @@ export default function TeacherSubscriptionPage({
     setIsSubmitting(false);
     if (onRefreshStatus) onRefreshStatus();
 
-    // محاولة فتح محادثة واتساب تلقائياً مع توفير تحويل مباشر للهواتف
+    // فتح محادثة واتساب بالرابط المباشر المشفر بالكامل
     try {
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      const opened = window.open(waUrl, '_blank', 'noopener,noreferrer');
-      if (!opened || opened.closed || typeof opened.closed === 'undefined') {
-        if (isMobile) {
-          window.location.href = waUrl;
-        }
-      }
+      window.open(waUrl, '_blank');
     } catch (e) {
-      console.warn('Auto-open blocked, relying on direct interactive button:', e);
+      console.warn('Auto window.open failed:', e);
     }
   };
 
@@ -398,30 +392,20 @@ export default function TeacherSubscriptionPage({
                 <div className="space-y-1">
                   <strong className="text-base font-black text-emerald-300 block">تم تسجيل طلب التفعيل بنجاح وإرساله للوحة الإدارة!</strong>
                   <p className="text-slate-200 leading-relaxed">
-                    تم حجز طلبك في المنصة. يرجى الضغط على أحد الزرين أسفله للتوجه المباشر إلى محادثة واتساب الرسمية وسرعة إرفاق صورة وصل بريدي موب:
+                    تم حجز طلبك بنجاح في المنصة. يرجى الضغط على الزر المباشر أسفله لفتح محادثة واتساب الرسمية المعنونة بالرسالة المشفرة وإرسال وصل بريدي موب:
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-emerald-500/30">
+              <div className="pt-2 border-t border-emerald-500/30">
                 <a
                   href={whatsAppDirectUrl || createWhatsAppDirectReceiptLink(selectedTier.name, selectedTier.priceDZD)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="py-3 px-5 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-lg shadow-[#25D366]/30 cursor-pointer flex-1 min-w-[200px]"
+                  className="py-3.5 px-6 rounded-2xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition shadow-xl shadow-[#25D366]/30 cursor-pointer w-full text-center"
                 >
-                  <MessageCircle className="w-4 h-4 fill-slate-950 shrink-0" />
-                  <span>📱 فتح محادثة واتساب مباشرة الآن ({WHATSAPP_CONTACT_NUMBER})</span>
-                </a>
-
-                <a
-                  href={(whatsAppDirectUrl || '').replace('wa.me/', 'api.whatsapp.com/send?phone=')}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 transition border border-slate-700 shrink-0"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>رابط احتياطي (واتساب ويب)</span>
+                  <MessageCircle className="w-5 h-5 fill-slate-950 shrink-0" />
+                  <span>📱 فتح محادثة واتساب وإرسال الطلب الآن ({WHATSAPP_CONTACT_NUMBER})</span>
                 </a>
               </div>
             </div>

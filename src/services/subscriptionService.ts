@@ -97,15 +97,23 @@ export function createWhatsAppActivationLink(data: {
   phone: string;
   notes?: string;
 }): string {
-  const message = `طلب تفعيل اشتراك في «الدفتر اليومي الذكي للأستاذ»:
-- نوع الاشتراك: ${data.planName} (${data.priceDZD} دج)
-- البريد الإلكتروني (Gmail): ${data.email}
-- الاسم واللقب: ${data.fullName}
-- رقم الهاتف: ${data.phone}
-${data.notes ? `- ملاحظات إضافية: ${data.notes}\n` : ''}
-(سأقوم بإرفاق صورة وصل الدفع عبر بريدي موب في هذه المحادثة حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب)`;
+  const cleanEmail = data.email.trim();
+  const cleanName = data.fullName.trim();
+  const cleanPhone = data.phone.trim();
+  const cleanNotes = data.notes?.trim() || '';
 
-  return `https://api.whatsapp.com/send?phone=${WHATSAPP_INTL_NUMBER}&text=${encodeURIComponent(message)}`;
+  const messageLines = [
+    'طلب تفعيل اشتراك في «الدفتر اليومي الذكي للأستاذ»:',
+    `- نوع الاشتراك: ${data.planName} (${data.priceDZD} دج)`,
+    `- البريد الإلكتروني (Gmail): ${cleanEmail}`,
+    `- الاسم واللقب: ${cleanName}`,
+    `- رقم الهاتف: ${cleanPhone}`,
+    cleanNotes ? `- ملاحظات إضافية: ${cleanNotes}` : '',
+    '(سأقوم بإرفاق صورة وصل الدفع عبر بريدي موب في هذه المحادثة حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب)'
+  ].filter(Boolean);
+
+  const fullMessage = messageLines.join('\n');
+  return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(fullMessage)}`;
 }
 
 /**
@@ -113,11 +121,9 @@ ${data.notes ? `- ملاحظات إضافية: ${data.notes}\n` : ''}
  */
 export function createWhatsAppDirectReceiptLink(planName?: string, priceDZD?: number): string {
   const planInfo = planName ? ` (${planName} — ${priceDZD} دج)` : '';
-  const message = `السلام عليكم ورحمة الله،
-أود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ»${planInfo}.
-سأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
+  const fullMessage = `السلام عليكم ورحمة الله،\nأود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ»${planInfo}.\nسأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
 
-  return `https://api.whatsapp.com/send?phone=${WHATSAPP_INTL_NUMBER}&text=${encodeURIComponent(message)}`;
+  return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(fullMessage)}`;
 }
 
 const STORAGE_KEY = 'smart_notebook_subscriptions_v2';
