@@ -341,7 +341,8 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
  * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسحابة والسيرفر
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
-  // Un-blacklist primary test accounts
+  // Un-blacklist primary permanent admin test accounts
+  removeDeletedEmail(ADMIN_EMAIL);
   removeDeletedEmail('hdjazil95@gmail.com');
 
   const local = loadAllSubscriptions();
@@ -354,8 +355,9 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
       Object.keys(firestoreSubs).forEach(email => {
         const cleanEmail = email.toLowerCase();
-        merged[cleanEmail] = firestoreSubs[email];
-        removeDeletedEmail(cleanEmail);
+        if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+          merged[cleanEmail] = firestoreSubs[email];
+        }
       });
     }
   } catch (e) {
@@ -368,7 +370,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     if (cloudSubs) {
       Object.keys(cloudSubs).forEach(email => {
         const cleanEmail = email.toLowerCase();
-        if (!localDeleted.includes(cleanEmail) || cloudSubs[cleanEmail].status === 'pending' || cloudSubs[cleanEmail].status === 'active') {
+        if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
           merged[cleanEmail] = cloudSubs[email];
         }
       });
@@ -386,7 +388,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
         const serverSubs = data.subscriptions as Record<string, TeacherSubscription>;
         Object.keys(serverSubs).forEach(email => {
           const cleanEmail = email.toLowerCase();
-          if (!localDeleted.includes(cleanEmail)) {
+          if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
             merged[cleanEmail] = serverSubs[email];
           }
         });
@@ -396,7 +398,14 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     console.warn('Local API sync failed, using firestore/cloud/local cache:', err);
   }
 
-  // حماية حساب المدير
+  // تطبيق القائمة السوداء للمحذوفات نهائياً لحذفها من الكاش والواجهة
+  localDeleted.forEach(deletedEmail => {
+    if (deletedEmail !== ADMIN_EMAIL.toLowerCase()) {
+      delete merged[deletedEmail];
+    }
+  });
+
+  // حماية حساب المدير المشرف العام
   merged[ADMIN_EMAIL] = local[ADMIN_EMAIL] || {
     teacherEmail: ADMIN_EMAIL,
     teacherName: 'الأستاذ المشرف djazild',
@@ -862,6 +871,26 @@ export function checkTeacherFeatureAccess(email?: string | null): {
   }
 
   const clean = email.trim().toLowerCase();
+  
+  // إذا كان الحساب محذوفاً بقرار المشرف، يتم توقيف الوصول وتلغى الصلاحيات فوراً
+  const deletedList = getDeletedEmails();
+  if (deletedList.includes(clean) && clean !== ADMIN_EMAIL.toLowerCase()) {
+    return {
+      hasAccess: false,
+      status: 'none',
+      reason: 'تم إلغاء تفعيل هذا الحساب وحذفه نهائياً بقرار من إدارة المنصة.',
+      subscription: {
+        teacherEmail: clean,
+        teacherName: '',
+        planId: 'none',
+        status: 'none',
+        amountDZD: 0,
+        expiresAt: null,
+        isLifetime: false
+      }
+    };
+  }
+
   if (clean === ADMIN_EMAIL.toLowerCase()) {
     const adminSub = getTeacherSubscription(ADMIN_EMAIL);
     return {
@@ -934,17 +963,18 @@ export async function deleteTeacherAccount(
     return { success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' };
   }
 
-  // إضافة الحساب للقائمة السوداء للمحذوفات نهائياً
+  // 1. إضافة الحساب للقائمة السوداء للمحذوفات نهائياً
   addDeletedEmail(targetClean);
 
+  // 2. حذف الحساب من قائمة الاشتراكات المحلية والتحديث
   const all = loadAllSubscriptions();
   delete all[targetClean];
   saveAllSubscriptions(all);
 
-  // مسح المقتطف الحقيقي من Firestore مباشرة
+  // 3. مسح المقتطف الحقيقي من Firestore مباشرة
   await deleteSubscriptionFromFirestore(targetClean);
 
-  // مسح جميع الملفات والبيانات المعزولة للأستاذ محلياً
+  // 4. مسح جميع الملفات والبيانات المعزولة للأستاذ محلياً
   const cleanKey = targetClean.replace(/[^a-z0-9]/g, '_');
   try {
     localStorage.removeItem(`teacher_profile_${cleanKey}`);
@@ -954,15 +984,20 @@ export async function deleteTeacherAccount(
     localStorage.removeItem(`teacher_pdfs_${cleanKey}`);
   } catch {}
 
+  // 5. إشعار السيرفر والمخزن السحابي وتحديث الحدث المباشر
   fetch('/api/subscriptions/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ targetTeacherEmail: targetClean })
   }).catch(e => console.warn('Background sync delete failed:', e));
 
+  try {
+    window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: all }));
+  } catch {}
+
   return {
     success: true,
-    message: `تم إلغاء اشتراك وحذف حساب الأستاذ (${targetClean}) نهائياً من السيرفر والمنصة.`
+    message: `تم إلغاء اشتراك وحذف حساب الأستاذ (${targetClean}) نهائياً وتوقيف الصلاحيات فوراً.`
   };
 }
 
