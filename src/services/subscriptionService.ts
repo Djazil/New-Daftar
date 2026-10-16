@@ -209,10 +209,34 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     }
   };
 
+  const droidyTeacherSub: TeacherSubscription = {
+    teacherEmail: 'droidy.dz@gmail.com',
+    teacherName: 'أ. عبد الجليل (droidy.dz)',
+    phoneNumber: '0656636033',
+    planId: '6months',
+    status: 'pending',
+    amountDZD: 3000,
+    isLifetime: false,
+    requestedAt: new Date().toISOString(),
+    expiresAt: null,
+    adminNotes: 'حساب جديد تم تسجيله عبر Google بانتظار التفعيل من المشرف',
+    paymentProof: {
+      transactionRef: 'BM-2026-99210',
+      senderName: 'عبد الجليل',
+      phoneNumber: '0656636033',
+      ripNumber: '007 99999 0023456789 25',
+      amount: 3000,
+      paidAt: new Date().toISOString(),
+      receiptNote: 'حوالة بريدي موب بانتظار التأكيد والتفعيل',
+      sentViaWhatsApp: true
+    }
+  };
+
   return {
     [ADMIN_EMAIL]: adminSub,
     ['prof.ahmed@gmail.com']: sampleTeacherSub,
-    ['prof.karim.dz@gmail.com']: pendingTeacherSub
+    ['prof.karim.dz@gmail.com']: pendingTeacherSub,
+    ['droidy.dz@gmail.com']: droidyTeacherSub
   };
 }
 
