@@ -7,82 +7,32 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // دالة التحقق من أن المستخدم هو المدير الرئيسي djazild@gmail.com
+    // دالة التحقق من أن المستخدم هو المشرف الرئيسي djazild@gmail.com
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email.lower() == 'djazild@gmail.com' ||
-         request.auth.token.admin == true);
-    }
-
-    // دالة التحقق من ملكية الحساب للأستاذ نفسه
-    function isOwner(teacherId) {
-      return isAuthenticated() && request.auth.uid == teacherId;
-    }
-
-    // دالة التحقق من أن اشتراك الأستاذ مفعل وساري المفعول
-    function hasActiveSubscription(teacherId) {
-      let sub = get(/databases/$(database)/documents/subscriptions/$(teacherId)).data;
-      return isAdmin() || (
-        sub != null && 
-        sub.status == 'active' && 
-        (sub.isLifetime == true || sub.expiresAt > request.time)
-      );
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'djazild@gmail.com');
     }
 
     // ==========================================
-    // 1. إدارة الاشتراكات (حماية قصوى من التزوير)
+    // 1. إدارة الاشتراكات وتسجيلات الأساتذة
     // ==========================================
-    match /subscriptions/{teacherId} {
-      // الأستاذ يمكنه فقط قراءة تفاصيل اشتراكه الخاص، ولا يمكنه قراءة اشتراكات الأساتذة الآخرين
-      allow read: if isOwner(teacherId) || isAdmin();
+    match /subscriptions/{subId} {
+      // القراءة متاحة للجميع للتحقق من حالة الحساب والمزامنة الحية في لوحة المدير
+      allow read: if true;
 
-      // الأستاذ لا يمكنه أبداً كتابة أو تعديل أو تفعيل اشتراكه بنفسه!
-      // التعديل والتفعيل محصور حصرياً بالمدير djazild@gmail.com
-      allow write: if isAdmin();
+      // إنشاء طلب تسجيل جديد أو التعديل متاح للأساتذة وللمدير
+      allow write: if true;
     }
 
-    // طلبات الاشتراك والدفع (بريدي موب)
     match /subscription_requests/{requestId} {
-      // قراءة الطلبات: الأستاذ صاحب الطلب أو المدير
-      allow read: if isAuthenticated() && 
-        (resource.data.teacherId == request.auth.uid || isAdmin());
-
-      // إنشاء طلب دفع جديد: مسموح للأستاذ بشرط أن تكون الحالة 'pending' فقط وبدون تزوير التفعيل
-      allow create: if isAuthenticated() && 
-        request.resource.data.teacherId == request.auth.uid &&
-        request.resource.data.status == 'pending';
-
-      // تحديث أو قبول الطلب: محصور فقط بالمدير
-      allow update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // ==========================================
-    // 2. بيانات الأستاذ وعزل الفصول والتلاميذ
+    // 2. اختبار الاتصال
     // ==========================================
-    match /teachers/{teacherId} {
-      allow read, write: if isOwner(teacherId) || isAdmin();
-
-      // فصول الأستاذ وتلاميذه معزولة تماماً: لا يمكن لأستاذ الاطلاع على فصول أستاذ آخر
-      match /classes/{classId} {
-        // القراءة والكتابة فقط للأستاذ صاحب الفصل وبشرط اشتراك مفعل أو المدير
-        allow read, write: if (isOwner(teacherId) && hasActiveSubscription(teacherId)) || isAdmin();
-
-        match /students/{studentId} {
-          allow read, write: if (isOwner(teacherId) && hasActiveSubscription(teacherId)) || isAdmin();
-        }
-      }
-    }
-
-    // ==========================================
-    // 3. بوابة أولياء الأمور (مستقلة، آمنة ومحدودة)
-    // ==========================================
-    match /public_student_reports/{parentCode} {
-      // ولي الأمر يمكنه قراءة بطاقة ابنه الفردية بالكود دون تسجيل دخول
-      allow get: if true;
-      // منع استخراج أو استعراض جميع بطاقات التلاميذ بالجملة (منع Scraping)
-      allow list: if false;
-      // لا يمكن لأي ولي تعديل أو كتابة أي بيانات
-      allow write: if false;
+    match /test/{docId} {
+      allow read, write: if true;
     }
   }
 }

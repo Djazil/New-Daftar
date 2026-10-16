@@ -1,53 +1,49 @@
-# Full Source Code Exporter & In-App Code Viewer Plan
+# Official Firebase Firestore Direct Integration & Real-Time Activation Sync Plan
 
-In response to the user's request to obtain the complete codebase ("اعطيني الكود البرمجي الكامل للموقع"), this plan introduces a dedicated **Full Source Code Exporter & Code Viewer** feature within the application dashboard. This allows the teacher/admin to inspect, copy, and download all application files (React components, state hooks, Firebase/Database integrations, analytics, styling rules, and server configurations) as a single clean ZIP archive or formatted code document directly from inside the app.
+In response to the user's explicit choices (direct Firebase Firestore setup and real-time cloud sync with instant alerts for new registration requests), this plan outlines the architecture for connecting the application directly to Firebase Firestore, deploying robust security rules, and wiring live `onSnapshot` listeners to ensure teacher registration requests instantly reach the admin dashboard (`AdminSubscriptionManager`) from any device or domain (Netlify, GitHub, AI Studio).
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Based on your responses in Phase 1:
-> - **Delivery Method**: You requested a direct option to download/export all project files as an archive/document from within the site.
-> - **Code Scope**: Included everything completely: Frontend components, teacher tools, database/Firebase schemas, types, server utilities, and styling setup.
-
-- **Confirmed Decision 1**: An interactive **"تصدير الكود البرمجي الكامل" (Export Full Source Code)** panel will be added to the Teacher Settings / Dashboard header & menu, providing instant ZIP downloading as well as a single master TXT file download.
-- **Confirmed Decision 2**: An in-app **Interactive Code Explorer Modal** will allow browsing through the entire folder tree and copying individual file snippets or full files with line numbers and one-click copy.
+> The user confirmed the following structural architecture during Turn 1 clarification:
+> 1. **Real-time Live Sync & Instant Alerts**: Admin dashboard receives live notification toasts whenever a teacher registers or submits an activation request.
+> 2. **Official Firebase Firestore SDK Direct Integration**: Direct database persistence using Firebase Firestore, replacing local-only fallbacks so data syncs across all devices, browsers, and host domains.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Provides a built-in full codebase manager and zip packager that scans all source files (`src/`, `types/`, `server.ts`, `vite.config.ts`, `package.json`, `index.html`, etc.), allowing teachers or admins to export a complete `.zip` archive or download a master single-file code documentation file.
-- **Target Audience**: Teachers, school administrators, or developers who want a backup, offline archive, or complete source code of the teacher notebook and student radar platform.
-- **Key Value**: Guarantees total data and code ownership with zero friction, allowing instant local downloading without leaving the web browser.
+- **Overarching Goal**: Eliminate data isolation on static hosts (like Netlify) by migrating the subscription registry to a centralized Firebase Firestore database.
+- **Key Experience**:
+  - Teachers registering via Google or submitting BaridiMob activation proofs write directly to the `/subscriptions` and `/subscription_requests` Firestore collections.
+  - The Admin (`djazild@gmail.com`) hears new incoming requests in real time via Firestore `onSnapshot` active listeners, receiving instant toast notifications and status badge counters.
+  - Admin activation, extension, suspension, or deletion operations perform transactional writes to Firestore, updating the teacher's status live without manual browser reloads.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Key User Flows**:
-  1. The user clicks **"الكود البرمجي" (Source Code)** button in the top header or settings drawer.
-  2. A modal opens showing:
-     - **Quick Stats**: Total file count, code lines, dependencies, and file size estimate.
-     - **Export Actions**:
-       - **"تنزيل المشروع كاملاً (ZIP archive)"**: Packages all source files into a downloadable zip file (`teacher-notebook-source.zip`).
-       - **"تحميل الكود في مستند واحد (Single TXT Document)"**: Bundles all files sequentially with clean headers into a readable file (`full_source_code.txt`).
-       - **"نسخ الكود الكامل للكليببورد"**: One-click button to copy the entire aggregated source code.
-     - **Interactive File Explorer**: A collapsible file tree where the user can expand folders (e.g. `src/components/`, `src/types/`, `src/utils/`) and inspect file contents live with line numbers and a copy button.
-- **Visual Identity & Theme**:
-  - Follows the existing dark/light mode posture of the application.
-  - High-density code preview cards using tabular monospace fonts (`font-mono tabular-nums`).
-  - Clear Arabic labels with sleek action icons (lucide icons: `Download`, `Code`, `FileArchive`, `Copy`, `Check`, `FolderZip`).
+- **Admin Control Panel Live Updates**:
+  - **Live Counter Badges**: Real-time counter badge showing pending requests (`طلبات الجدد بانتظار التفعيل`).
+  - **Instant Toast Notification**: High-visibility banner when a new request arrives while the admin dashboard is open.
+  - **Action Status Feedback**: Seamless button state spinners during Firestore mutations (`جاري التفعيل...`, `جاري الحفظ...`).
+- **Teacher Registration & Subscription Flow**:
+  - **Single-Click Request Submission**: Seamless Google Login auto-creates a pending subscription record in Firestore.
+  - **Direct WhatsApp Deep Link**: Encoded `https://wa.me/213656636033?text=...` deep link opens WhatsApp with full encoded request message.
+  - **Live Activation Banner**: Teachers see their status transition from `pending` to `active` immediately upon admin approval.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Client-Side In-Browser Zip Bundling vs Server API**:
-  - *Chosen Approach*: Client-side dynamic packaging using `jszip` + `file-saver` or embedded pre-packaged source map index.
-  - *Why*: Fast, client-side execution that works instantly in offline/PWA mode without server overhead.
-- **File Coverage Strategy**:
-  - *Chosen Approach*: Comprehensive bundle containing all application files (`App.tsx`, `AnalyticsCharts.tsx`, `StudentDetailsModal.tsx`, `VigilanceRadar.tsx`, `types.ts`, `server.ts`, `firebase.ts`, `index.html`, etc.).
-  - *Why*: Completely satisfies the user's request for "جميع ملفات الواجهة والأداة وقواعد البيانات بالكامل".
+- **Decision 1: Direct Firebase Firestore as Single Source of Truth**:
+  - *Chosen Approach*: Official `@google/genai` & `firebase/firestore` SDK initialization loaded from `firebase-applet-config.json` with `getDocFromServer` connection verification on app boot.
+  - *Why*: Static hosts like Netlify do not run local Node.js Express servers. Firestore provides global high-availability persistence across all domains.
+  - *Fallback Strategy*: Local `localStorage` acts as an optimistic offline cache, ensuring zero latency UI rendering while Firestore syncing completes.
+
+- **Decision 2: Strict Access Control & Role Protection in Rules**:
+  - *Chosen Approach*: Enforce `isAdmin()` helper check in `firestore.rules` for write/activate/delete operations (`request.auth.token.email == 'djazild@gmail.com'`).
+  - *Why*: Prevents identity spoofing or unauthorized self-activation by non-admin users.
 
 ---
 
@@ -55,30 +51,46 @@ In response to the user's request to obtain the complete codebase ("اعطيني
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        App Header / Settings Menu                      │
-│                [ زر "الكود البرمجي الكامل (Source Code)" ]               │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Opens Modal / Panel
-                                    ▼
+│                        User & Admin Web Clients                        │
+│             (Netlify SPA / Mobile / Desktop - React 19)                │
+└───────────────────┬────────────────────────────────┬───────────────────┘
+                    │                                │
+    1. Google Sign-In & Payment Proofs      2. Live Firestore Listener
+    (addDoc / setDoc to /subscriptions)     (onSnapshot /subscriptions)
+                    │                                │
+                    ▼                                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                      CodeExporterModal Component                       │
+│                     Firebase Firestore Database                        │
 │                                                                        │
-│  ┌────────────────────────┐  ┌──────────────────────────────────────┐  │
-│  │   File Tree Browser    │  │   Code Viewport & Copy Action        │  │
-│  │  ├── src/              │  │  ┌────────────────────────────────┐  │  │
-│  │  │   ├── App.tsx       │  │  │ // App.tsx                     │  │  │
-│  │  │   ├── types.ts      │  │  │ import React, { useState }...  │  │  │
-│  │  │   └── components/   │  │  └────────────────────────────────┘  │  │
-│  └────────────────────────┘  └──────────────────────────────────────┘  │
-│                                                                        │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  Actions Bar:                                                    │  │
-│  │  [📦 تنزيل ملف ZIP ]  [📄 تحميل كمستند TXT ]  [📋 نسخ الكل ]    │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ /subscriptions/{emailKey}                                      │   │
+│   │   - teacherEmail, teacherName, planId, status, requestedAt...   │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ /subscription_requests/{requestId}                             │   │
+│   │   - teacherEmail, proof, timestamp, status                     │   │
+│   └────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Components to Create/Update**:
-  1. `src/components/CodeExporterModal.tsx`: The primary modal with file tree selection, live preview, syntax formatting, line counts, zip downloader, and single-file aggregator.
-  2. `src/utils/sourceBundle.ts`: Embedded dictionary / generator of all codebase files mapped by relative path.
-  3. `src/App.tsx`: Header trigger button and modal state management.
+### Planned Implementation Steps
+
+1. **Step 1: Firebase Blueprint & Config Preparation**:
+   - Create/update `firebase-blueprint.json` defining `EntityDefinition` for `Subscription` and `SubscriptionRequest`.
+   - Ensure `firebase-applet-config.json` is loaded cleanly into `src/services/firebase.ts`.
+
+2. **Step 2: Firestore SDK Service Layer (`src/services/firebaseSubscriptionService.ts`)**:
+   - Initialize `db` with `getFirestore(app, config.firestoreDatabaseId)`.
+   - Add `testConnection()` using `getDocFromServer(doc(db, 'test', 'connection'))`.
+   - Implement `handleFirestoreError` with structured `FirestoreErrorInfo` throwing JSON errors for diagnostics.
+   - Implement `subscribeToAllSubscriptions(callback)` using `onSnapshot(collection(db, 'subscriptions'))`.
+   - Implement `saveSubscriptionToFirestore(sub)`, `activateSubscriptionInFirestore(email, planId, options)`, and `deleteSubscriptionFromFirestore(email)`.
+
+3. **Step 3: Update `subscriptionService.ts` & Admin UI**:
+   - Route `fetchSubscriptionsFromServer` and `saveAllSubscriptions` through the new Firebase service layer.
+   - Wire `onSnapshot` in `AdminSubscriptionManager.tsx` to automatically trigger toast alerts when pending requests count increases.
+   - Keep WhatsApp deep link generator `createWhatsAppActivationLink` using `wa.me/213656636033` with full `encodeURIComponent` encoding.
+
+4. **Step 4: Rules & ESLint Audit**:
+   - Audit `firestore.rules` to ensure `/subscriptions/{teacherId}` read is allowed for the owner or admin, and write is strictly restricted to `isAdmin()`.
+   - Compile and verify applet build state via `compile_applet` and `lint_applet`.

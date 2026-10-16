@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "Subscription": {
+      "title": "Teacher Subscription",
+      "description": "Represents a teacher subscription record and activation status",
+      "type": "object",
+      "properties": {
+        "teacherEmail": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "planId": { "type": "string" },
+        "status": { "type": "string", "enum": ["none", "pending", "active", "expired", "suspended"] },
+        "amountDZD": { "type": "number" },
+        "requestedAt": { "type": "string" },
+        "activatedAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "isLifetime": { "type": "boolean" },
+        "activatedByAdminEmail": { "type": "string" },
+        "adminNotes": { "type": "string" }
+      },
+      "required": ["teacherEmail", "status"]
+    }
+  },
+  "firestore": {
+    "/subscriptions/{teacherEmailKey}": {
+      "schema": "Subscription",
+      "description": "Collection storing subscription records indexed by encoded teacher email"
+    }
+  }
+}

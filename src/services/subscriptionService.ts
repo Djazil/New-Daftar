@@ -1,4 +1,10 @@
 import { SubscriptionTier, SubscriptionPlanId, TeacherSubscription, PaymentProof, SubscriptionStatus } from '../types';
+import {
+  saveSubscriptionToFirestore,
+  fetchSubscriptionsFromFirestore,
+  deleteSubscriptionFromFirestore,
+  subscribeToAllSubscriptionsInFirestore
+} from './firebaseSubscriptionService';
 
 export const ADMIN_EMAIL = 'djazild@gmail.com';
 
@@ -325,19 +331,39 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
     window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: map }));
   } catch {}
 
+  // رفع البيانات إلى قواعد بيانات Firebase Firestore فوراً لكل اشتراك
+  Object.values(map).forEach(sub => {
+    saveSubscriptionToFirestore(sub);
+  });
+
   // رفع البيانات إلى السحابة فوراً في الخلفية
   pushToCloudSyncStore(map);
 }
 
 /**
- * مزامنة وجلب جميع الاشتراكات المركزية من السيرفر والسحابة وتحديث التخزين المحلي
+ * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسحابة والسيرفر
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
   const local = loadAllSubscriptions();
   const merged: Record<string, TeacherSubscription> = { ...local };
   let localDeleted = getDeletedEmails();
 
-  // 1. مزامنة مع المخزن السحابي العالمي المباشر لـ Netlify
+  // 1. مزامنة رئيسية مع قواعد بيانات Firebase Firestore الرسمية
+  try {
+    const firestoreSubs = await fetchSubscriptionsFromFirestore();
+    if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
+      Object.keys(firestoreSubs).forEach(email => {
+        const cleanEmail = email.toLowerCase();
+        if (!localDeleted.includes(cleanEmail)) {
+          merged[cleanEmail] = firestoreSubs[email];
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Firestore fetch warning:', e);
+  }
+
+  // 2. مزامنة مع المخزن السحابي المباشر لـ Netlify
   try {
     const cloudSubs = await fetchFromCloudSyncStore();
     if (cloudSubs) {
@@ -352,7 +378,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     console.warn('Cloud fetch warning:', e);
   }
 
-  // 2. مزامنة مع السيرفر المحلي إن كان شغالاً
+  // 3. مزامنة مع السيرفر المحلي إن كان شغالاً
   try {
     const res = await fetch('/api/subscriptions');
     if (res.ok) {
@@ -368,7 +394,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
       }
     }
   } catch (err) {
-    console.warn('Local API sync failed, using cloud and local cache:', err);
+    console.warn('Local API sync failed, using firestore/cloud/local cache:', err);
   }
 
   // حماية حساب المدير

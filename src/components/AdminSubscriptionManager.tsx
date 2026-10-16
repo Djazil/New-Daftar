@@ -13,6 +13,7 @@ import {
   generateTestSubscription, deleteTeacherAccount,
   suspendTeacherAccount, extendTeacherSubscription
 } from '../services/subscriptionService';
+import { subscribeToAllSubscriptionsInFirestore } from '../services/firebaseSubscriptionService';
 
 interface AdminSubscriptionManagerProps {
   currentUser: AuthUser;
@@ -38,18 +39,28 @@ export default function AdminSubscriptionManager({
   const [extendDaysInput, setExtendDaysInput] = useState<number>(30);
   const [extendReasonInput, setExtendReasonInput] = useState<string>('');
 
-  // مزامنة حية وفورية مع السيرفر المركزي عند فتح اللوحة ودورياً كل 3.5 ثوانٍ
+  // مزامنة حية وفورية مع قواعد بيانات Firebase Firestore وسيرفر التطبيق
   useEffect(() => {
     let isMounted = true;
     
-    // جلب فوري عند الفتح
+    // 1. جلب فوري ومباشر
     fetchSubscriptionsFromServer().then(data => {
       if (isMounted && data) {
         setSubscriptions(data);
       }
     });
 
-    // استماع لأي تحديث محلي أو من النوافذ الأخرى
+    // 2. اشتراك حي ومباشر مع Firestore لاستقبال أي طلب تسجيل جديد فوراً
+    const unsubFirestore = subscribeToAllSubscriptionsInFirestore((firestoreMap) => {
+      if (isMounted && firestoreMap && Object.keys(firestoreMap).length > 0) {
+        setSubscriptions(prev => {
+          const merged = { ...prev, ...firestoreMap };
+          return merged;
+        });
+      }
+    });
+
+    // 3. استماع لأي تحديث محلي أو من النوافذ الأخرى
     const handleUpdate = (e: any) => {
       if (isMounted && e.detail) {
         setSubscriptions(e.detail);
@@ -57,7 +68,7 @@ export default function AdminSubscriptionManager({
     };
     window.addEventListener('smart_notebook_subscriptions_updated', handleUpdate);
 
-    // تكرار التحقق السحابي دورياً لاستقبال طلبات الأساتذة في الوقت الفعلي
+    // 4. تكرار التحقق السحابي دورياً لاستقبال طلبات الأساتذة في الوقت الفعلي
     const interval = setInterval(() => {
       fetchSubscriptionsFromServer().then(data => {
         if (isMounted && data) {
@@ -68,6 +79,7 @@ export default function AdminSubscriptionManager({
 
     return () => {
       isMounted = false;
+      unsubFirestore();
       window.removeEventListener('smart_notebook_subscriptions_updated', handleUpdate);
       clearInterval(interval);
     };
