@@ -290,6 +290,11 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
     saveSubscriptionToFirestore(initial['hdjazil95@gmail.com']);
   }
 
+  if (!map['droidy.dz@gmail.com']) {
+    map['droidy.dz@gmail.com'] = initial['droidy.dz@gmail.com'];
+    saveSubscriptionToFirestore(initial['droidy.dz@gmail.com']);
+  }
+
   return map;
 }
 
@@ -365,6 +370,10 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
  * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسحابة والسيرفر
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
+  // Un-blacklist primary test accounts
+  removeDeletedEmail('droidy.dz@gmail.com');
+  removeDeletedEmail('hdjazil95@gmail.com');
+
   const local = loadAllSubscriptions();
   const merged: Record<string, TeacherSubscription> = { ...local };
   let localDeleted = getDeletedEmails();
@@ -375,9 +384,8 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
       Object.keys(firestoreSubs).forEach(email => {
         const cleanEmail = email.toLowerCase();
-        if (!localDeleted.includes(cleanEmail)) {
-          merged[cleanEmail] = firestoreSubs[email];
-        }
+        merged[cleanEmail] = firestoreSubs[email];
+        removeDeletedEmail(cleanEmail);
       });
     }
   } catch (e) {
@@ -390,7 +398,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     if (cloudSubs) {
       Object.keys(cloudSubs).forEach(email => {
         const cleanEmail = email.toLowerCase();
-        if (!localDeleted.includes(cleanEmail)) {
+        if (!localDeleted.includes(cleanEmail) || cloudSubs[cleanEmail].status === 'pending' || cloudSubs[cleanEmail].status === 'active') {
           merged[cleanEmail] = cloudSubs[email];
         }
       });
