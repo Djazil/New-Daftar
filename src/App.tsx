@@ -30,7 +30,6 @@ import LandingPage, { ADMIN_USER } from './LandingPage';
 import WelcomeSetupWizard from './WelcomeSetupWizard';
 import TeacherSubscriptionPage from './components/TeacherSubscriptionPage';
 import AdminSubscriptionManager from './components/AdminSubscriptionManager';
-import SecurityAuditBar from './components/SecurityAuditBar';
 import AnalyticsCharts from './components/AnalyticsCharts';
 import StudentDetailsModal from './components/StudentDetailsModal';
 import TimetableSessionModal from './components/TimetableSessionModal';
@@ -1446,12 +1445,6 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
   if (!currentUser || isParentPreviewOpen) {
     return (
       <div className="relative">
-        <SecurityAuditBar
-          currentUser={currentUser}
-          onSwitchUser={handleSwitchUser}
-          onOpenAdminPanel={() => setIsAdminManagerOpen(true)}
-          onRefreshState={() => setSubscriptionRefreshTick(t => t + 1)}
-        />
         {isParentPreviewOpen && currentUser && (
           <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-md">
             <span className="flex items-center gap-2">
@@ -1491,12 +1484,6 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
   if (!accessCheck.hasAccess) {
     return (
       <div className="relative">
-        <SecurityAuditBar
-          currentUser={currentUser}
-          onSwitchUser={handleSwitchUser}
-          onOpenAdminPanel={() => setIsAdminManagerOpen(true)}
-          onRefreshState={() => setSubscriptionRefreshTick(t => t + 1)}
-        />
         <TeacherSubscriptionPage
           user={currentUser}
           onLogout={handleLogout}
@@ -1519,12 +1506,6 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
   if (shouldShowSetupWizard) {
     return (
       <div className={`relative min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
-        <SecurityAuditBar
-          currentUser={currentUser}
-          onSwitchUser={handleSwitchUser}
-          onOpenAdminPanel={() => setIsAdminManagerOpen(true)}
-          onRefreshState={() => setSubscriptionRefreshTick(t => t + 1)}
-        />
         <WelcomeSetupWizard
           user={currentUser}
           initialProfile={teacherProfile}
@@ -1545,12 +1526,6 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
   // 3. المنصة البيداغوجية المتكاملة
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
-      <SecurityAuditBar
-        currentUser={currentUser}
-        onSwitchUser={handleSwitchUser}
-        onOpenAdminPanel={() => setIsAdminManagerOpen(true)}
-        onRefreshState={() => setSubscriptionRefreshTick(t => t + 1)}
-      />
       <div dir="rtl" className={`flex-1 flex flex-col md:flex-row relative ${darkMode ? 'text-slate-100' : 'text-slate-800'}`}>
 
       

@@ -78,16 +78,15 @@ export const WHATSAPP_INTL_NUMBER = '213656636033';
 
 // معلومات الدفع الرسمية عبر بريدي موب (BaridiMob)
 export const BARIDIMOB_CONFIG = {
-  ripNumber: '007 99999 0023456789 25',
-  ccpAccount: '23456789 مفتاح 25',
+  ripNumber: '00799999002093331792',
+  ccpAccount: '0020933317 المفتاح 92',
   bankName: 'بريد الجزائر - Algérie Poste (بريدي موب)',
   whatsappNumber: WHATSAPP_CONTACT_NUMBER,
   instructions: [
     'افتح تطبيق بريدي موب (BaridiMob) في هاتفك أو توجه لأقرب مكتب بريد.',
-    'قم بتحويل المبلغ المطابق للاشتراك المرغوب فيه عبر رقم الحساب البريدي الموحد (RIP).',
+    'قم بتحويل المبلغ عبر رقم الحساب البريدي الموحد RIP: 00799999002093331792',
     'احتفظ بصورة وصل الدفع أو لقطة شاشة من تطبيق بريدي موب.',
-    'املأ نموذج «تأكيد الدفع وتفعيل الاشتراك» أسفله، ثم اضغط على زر «إرسال طلب التفعيل عبر واتساب».',
-    'أرفق وصل الدفع يدويًا داخل محادثة واتساب حتى يتمكن المدير من مراجعة الدفع وتفعيل حسابك.'
+    'سجل دخولك بحساب Google وسيظهر حسابك فوراً لدى إدارة المنصة بانتظار التفعيل.'
   ]
 };
 
@@ -177,50 +176,6 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
   };
 
-  const sampleTeacherSub: TeacherSubscription = {
-    teacherEmail: 'prof.ahmed@gmail.com',
-    teacherName: 'أ. أحمد بلحاج',
-    planId: '1year',
-    status: 'active',
-    amountDZD: 5000,
-    isLifetime: false,
-    requestedAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-    activatedAt: new Date(Date.now() - 29 * 86400000).toISOString(),
-    expiresAt: new Date(Date.now() + 335 * 86400000).toISOString(),
-    activatedByAdminEmail: ADMIN_EMAIL,
-    paymentProof: {
-      transactionRef: 'BM-2026-98124',
-      senderName: 'أحمد بلحاج',
-      phoneNumber: '0661223344',
-      ripNumber: '007 99999 0023456789 25',
-      amount: 5000,
-      paidAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-      receiptNote: 'تم الدفع عبر بريدي موب بنجاح'
-    }
-  };
-
-  const pendingTeacherSub: TeacherSubscription = {
-    teacherEmail: 'prof.karim.dz@gmail.com',
-    teacherName: 'أ. كريم المنصوري',
-    phoneNumber: '0655443322',
-    planId: '6months',
-    status: 'pending',
-    amountDZD: 3000,
-    isLifetime: false,
-    requestedAt: new Date().toISOString(),
-    expiresAt: null,
-    paymentProof: {
-      transactionRef: 'BM-2026-44892',
-      senderName: 'كريم المنصوري',
-      phoneNumber: '0655443322',
-      ripNumber: '007 99999 0023456789 25',
-      amount: 3000,
-      paidAt: new Date().toISOString(),
-      receiptNote: 'حوالة بريدي موب - بانتظار التأكيد',
-      sentViaWhatsApp: true
-    }
-  };
-
   const hdjazil95Sub: TeacherSubscription = {
     teacherEmail: 'hdjazil95@gmail.com',
     teacherName: 'أ. عبد الجليل (hdjazil95)',
@@ -238,8 +193,6 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
 
   return {
     [ADMIN_EMAIL]: adminSub,
-    ['prof.ahmed@gmail.com']: sampleTeacherSub,
-    ['prof.karim.dz@gmail.com']: pendingTeacherSub,
     ['hdjazil95@gmail.com']: hdjazil95Sub
   };
 }

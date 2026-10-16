@@ -1,96 +1,111 @@
-# Official Firebase Firestore Direct Integration & Real-Time Activation Sync Plan
+# Redesign & Simplification Plan: Ultra-Clean Registration, Admin Panel & Parent Portal
 
-In response to the user's explicit choices (direct Firebase Firestore setup and real-time cloud sync with instant alerts for new registration requests), this plan outlines the architecture for connecting the application directly to Firebase Firestore, deploying robust security rules, and wiring live `onSnapshot` listeners to ensure teacher registration requests instantly reach the admin dashboard (`AdminSubscriptionManager`) from any device or domain (Netlify, GitHub, AI Studio).
+A comprehensive plan to simplify the registration experience, remove test features and scenario bars, streamline the admin control panel exclusively for `djazild@gmail.com`, establish a dedicated parents section without login, and ensure real-time persistence with Firebase Firestore.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The user confirmed the following structural architecture during Turn 1 clarification:
-> 1. **Real-time Live Sync & Instant Alerts**: Admin dashboard receives live notification toasts whenever a teacher registers or submits an activation request.
-> 2. **Official Firebase Firestore SDK Direct Integration**: Direct database persistence using Firebase Firestore, replacing local-only fallbacks so data syncs across all devices, browsers, and host domains.
+> All key product decisions have been confirmed by the user through clarification questions:
+> 1. **New Teacher Registration Flow**: Redirect new teachers to a clean, dedicated pending page showing BaridiMob RIP (`00799999002093331792`) and a direct WhatsApp activation button.
+> 2. **Admin Control Panel (`djazild@gmail.com`)**: Ultra-simple list containing registered accounts with only two core actions: **Accept Activation (تفعيل)** and **Reject/Delete (رفض وحذف)**.
+> 3. **Parent Portal**: Dedicated, independent tab on the main page for parents to look up student grades, averages, conduct, and absences using the student's unique code (`parentCode`).
+> 4. **Test & Scenario Removal**: Complete removal of `SecurityAuditBar` (the 7 scenarios bar) and all mock/test account generation buttons.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Overarching Goal**: Eliminate data isolation on static hosts (like Netlify) by migrating the subscription registry to a centralized Firebase Firestore database.
-- **Key Experience**:
-  - Teachers registering via Google or submitting BaridiMob activation proofs write directly to the `/subscriptions` and `/subscription_requests` Firestore collections.
-  - The Admin (`djazild@gmail.com`) hears new incoming requests in real time via Firestore `onSnapshot` active listeners, receiving instant toast notifications and status badge counters.
-  - Admin activation, extension, suspension, or deletion operations perform transactional writes to Firestore, updating the teacher's status live without manual browser reloads.
+- **What It Does**: Transforms the platform into a streamlined Algerian secondary school digital notebook app featuring:
+  1. An ultra-minimal landing/registration page with 1-click Google Sign-In and BaridiMob RIP (`00799999002093331792`) transfer details.
+  2. A dedicated **Parent Portal** tab allowing parents to view their child's academic report without needing an account.
+  3. A clean **Pending Activation Page** for newly registered teachers.
+  4. A minimal **Admin Control Panel** exclusively for `djazild@gmail.com` with real-time Firebase Firestore synchronization to accept or reject/delete teacher requests.
+- **Target Audience**: Algerian secondary school teachers (Sciences, Math, Physics, Literature) and parents tracking student progress.
 
 ---
 
-## 2. User Experience & Visual Design
+## 2. Visual Architecture & Component Flow
 
-- **Admin Control Panel Live Updates**:
-  - **Live Counter Badges**: Real-time counter badge showing pending requests (`طلبات الجدد بانتظار التفعيل`).
-  - **Instant Toast Notification**: High-visibility banner when a new request arrives while the admin dashboard is open.
-  - **Action Status Feedback**: Seamless button state spinners during Firestore mutations (`جاري التفعيل...`, `جاري الحفظ...`).
-- **Teacher Registration & Subscription Flow**:
-  - **Single-Click Request Submission**: Seamless Google Login auto-creates a pending subscription record in Firestore.
-  - **Direct WhatsApp Deep Link**: Encoded `https://wa.me/213656636033?text=...` deep link opens WhatsApp with full encoded request message.
-  - **Live Activation Banner**: Teachers see their status transition from `pending` to `active` immediately upon admin approval.
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                TOP NAVIGATION CONTRACT                                 │
+│  [Logo: دفتر الأستاذ]      [Tabs: الرئيسية | لـلأولياء | عن الدفتر]      [تسجيل الدخول عبر Google]  │
+└───────────────────────────────────┬────────────────────────────────────────────────────┘
+                                    │
+          ┌─────────────────────────┴─────────────────────────┐
+          │                                                   │
+  ┌───────▼──────────────────────────┐             ┌──────────▼─────────────────────────┐
+  │     TEACHER REGISTRATION FLOW     │             │     PARENT PORTAL TAB (NO LOGIN)   │
+  │  - 1-Click Google Sign-In        │             │  - Search box: Student Code        │
+  │  - BaridiMob RIP Info            │             │  - Displays: Grades, Averages,     │
+  │  - Instant save to Firestore     │             │    Conduct & Absence Records       │
+  └───────────────┬──────────────────┘             └────────────────────────────────────┘
+                  │
+  ┌───────────────▼──────────────────┐
+  │  PENDING PAGE / STATUS CHECK     │
+  │  - Status: "حسابك قيد المراجعة"   │
+  │  - RIP: 00799999002093331792     │
+  │  - Direct WhatsApp Contact Button│
+  └───────────────┬──────────────────┘
+                  │
+  ┌───────────────▼─────────────────────────────────────────────────────────────────────┐
+  │                   ADMIN CONTROL PANEL (djazild@gmail.com STRICTLY)                   │
+  │  - Registered Teachers Table (Email, Name, Requested Date, Status)                   │
+  │  - Action 1: [تفعيل] (Accept & Activate)                                            │
+  │  - Action 2: [رفض وحذف] (Reject & Permanently Delete from Firestore)                 │
+  └─────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Direct Firebase Firestore as Single Source of Truth**:
-  - *Chosen Approach*: Official `@google/genai` & `firebase/firestore` SDK initialization loaded from `firebase-applet-config.json` with `getDocFromServer` connection verification on app boot.
-  - *Why*: Static hosts like Netlify do not run local Node.js Express servers. Firestore provides global high-availability persistence across all domains.
-  - *Fallback Strategy*: Local `localStorage` acts as an optimistic offline cache, ensuring zero latency UI rendering while Firestore syncing completes.
+1. **Complete Removal of Scenario Simulation & Test Accounts**:
+   - *Decision*: Remove `SecurityAuditBar` and all test generator buttons (`prof.test...`, `generateTestSubscription`).
+   - *Rationale*: Eliminates clutter and ensures the admin panel displays only genuine user registrations from Firestore.
 
-- **Decision 2: Strict Access Control & Role Protection in Rules**:
-  - *Chosen Approach*: Enforce `isAdmin()` helper check in `firestore.rules` for write/activate/delete operations (`request.auth.token.email == 'djazild@gmail.com'`).
-  - *Why*: Prevents identity spoofing or unauthorized self-activation by non-admin users.
+2. **Ultra-Clean Registration Page**:
+   - *Decision*: Simplify text, highlight Google Sign-In, and display the official BaridiMob RIP `00799999002093331792`.
+   - *Rationale*: Directs teachers quickly to signup without overwhelming text or marketing jargon.
+
+3. **Dedicated Parent Portal Tab**:
+   - *Decision*: Position a dedicated tab "بوابة الأولياء" in the header navigation that opens a clean search interface for parents using student codes (e.g. `BAC-8821`).
+   - *Rationale*: Grants parents instant access to their children's records while requiring zero registration.
+
+4. **Streamlined Admin Panel**:
+   - *Decision*: Limit access strictly to `djazild@gmail.com`. Simplify the UI to display only registered teachers with two primary actions: **تفعيل (Activate)** and **رفض وحذف (Reject/Delete)**.
+   - *Rationale*: Offers maximum efficiency with minimum cognitive load and real-time Firestore database sync.
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+## 4. Technical Strategy & Data Flow
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        User & Admin Web Clients                        │
-│             (Netlify SPA / Mobile / Desktop - React 19)                │
-└───────────────────┬────────────────────────────────┬───────────────────┘
-                    │                                │
-    1. Google Sign-In & Payment Proofs      2. Live Firestore Listener
-    (addDoc / setDoc to /subscriptions)     (onSnapshot /subscriptions)
-                    │                                │
-                    ▼                                ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                     Firebase Firestore Database                        │
-│                                                                        │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │ /subscriptions/{emailKey}                                      │   │
-│   │   - teacherEmail, teacherName, planId, status, requestedAt...   │   │
-│   └────────────────────────────────────────────────────────────────┘   │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │ /subscription_requests/{requestId}                             │   │
-│   │   - teacherEmail, proof, timestamp, status                     │   │
-│   └────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────────────┘
-```
+- **Persistence Layer**:
+  - Primary collection in Firestore: `subscriptions/{teacherEmailKey}`.
+  - Data shape: `TeacherSubscription` (`teacherEmail`, `teacherName`, `status`, `planId`, `requestedAt`, `activatedAt`, `adminNotes`).
+- **Google Sign-In Modal & Auto Registration**:
+  - `handleGoogleSignIn(user)` in `App.tsx` calls `registerOrUpdateGoogleUser(user)`.
+  - Automatically writes `{ teacherEmail, teacherName, status: 'pending', requestedAt: new Date().toISOString() }` directly to Firestore.
+- **Admin Authentication**:
+  - `djazild@gmail.com` is verified as the sole admin. Non-admin users attempting to open the admin panel will be blocked.
 
-### Planned Implementation Steps
+---
 
-1. **Step 1: Firebase Blueprint & Config Preparation**:
-   - Create/update `firebase-blueprint.json` defining `EntityDefinition` for `Subscription` and `SubscriptionRequest`.
-   - Ensure `firebase-applet-config.json` is loaded cleanly into `src/services/firebase.ts`.
+## 5. Step-by-Step Implementation Outline
 
-2. **Step 2: Firestore SDK Service Layer (`src/services/firebaseSubscriptionService.ts`)**:
-   - Initialize `db` with `getFirestore(app, config.firestoreDatabaseId)`.
-   - Add `testConnection()` using `getDocFromServer(doc(db, 'test', 'connection'))`.
-   - Implement `handleFirestoreError` with structured `FirestoreErrorInfo` throwing JSON errors for diagnostics.
-   - Implement `subscribeToAllSubscriptions(callback)` using `onSnapshot(collection(db, 'subscriptions'))`.
-   - Implement `saveSubscriptionToFirestore(sub)`, `activateSubscriptionInFirestore(email, planId, options)`, and `deleteSubscriptionFromFirestore(email)`.
-
-3. **Step 3: Update `subscriptionService.ts` & Admin UI**:
-   - Route `fetchSubscriptionsFromServer` and `saveAllSubscriptions` through the new Firebase service layer.
-   - Wire `onSnapshot` in `AdminSubscriptionManager.tsx` to automatically trigger toast alerts when pending requests count increases.
-   - Keep WhatsApp deep link generator `createWhatsAppActivationLink` using `wa.me/213656636033` with full `encodeURIComponent` encoding.
-
-4. **Step 4: Rules & ESLint Audit**:
-   - Audit `firestore.rules` to ensure `/subscriptions/{teacherId}` read is allowed for the owner or admin, and write is strictly restricted to `isAdmin()`.
-   - Compile and verify applet build state via `compile_applet` and `lint_applet`.
+1. **Remove Scenario & Test Features**:
+   - Remove `SecurityAuditBar` component and references in `App.tsx`.
+   - Remove `generateTestSubscription` and test preset buttons in `LandingPage.tsx` and `AdminSubscriptionManager.tsx`.
+2. **Update BaridiMob Config**:
+   - Set official BaridiMob RIP to `00799999002093331792` in `subscriptionService.ts` and UI views.
+3. **Refactor LandingPage.tsx**:
+   - Streamline visual layout, reduce copy density, refine Google Sign-In button and BaridiMob card.
+   - Add a dedicated **Parent Portal** tab view ("بوابة المتابعة للأولياء") for searching student codes.
+4. **Refactor Teacher Subscription / Pending Page**:
+   - Ensure new signups see the clean Pending status view ("حسابك قيد المراجعة والتفعيل") with BaridiMob details and direct WhatsApp link.
+5. **Simplify AdminSubscriptionManager.tsx**:
+   - Keep only registered teachers (exclude any test accounts).
+   - Display minimal columns: Teacher Name & Email, Registration Date, Status badge, and two actions: **تفعيل** (Green) and **رفض وحذف** (Red).
+   - Connect directly to `subscribeToAllSubscriptionsInFirestore` for instant real-time UI updates.
+6. **Verification & Build Check**:
+   - Run `compile_applet` and `lint_applet` to ensure zero compilation or type errors.
