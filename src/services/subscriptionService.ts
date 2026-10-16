@@ -105,7 +105,7 @@ export function createWhatsAppActivationLink(data: {
 ${data.notes ? `- ملاحظات إضافية: ${data.notes}\n` : ''}
 (سأقوم بإرفاق صورة وصل الدفع عبر بريدي موب في هذه المحادثة حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب)`;
 
-  return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${WHATSAPP_INTL_NUMBER}&text=${encodeURIComponent(message)}`;
 }
 
 /**
@@ -117,7 +117,7 @@ export function createWhatsAppDirectReceiptLink(planName?: string, priceDZD?: nu
 أود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ»${planInfo}.
 سأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
 
-  return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${WHATSAPP_INTL_NUMBER}&text=${encodeURIComponent(message)}`;
 }
 
 const STORAGE_KEY = 'smart_notebook_subscriptions_v2';
@@ -260,6 +260,44 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
   return map;
 }
 
+// مخزن سحابي مباشر متوافق مع Netlify لمزامنة الاشتراكات الحية عبر كافة الأجهزة والمتصفحات
+const GLOBAL_CLOUD_SYNC_BIN = 'https://api.npoint.io/469493a74a1e948834a3';
+
+async function pushToCloudSyncStore(map: Record<string, TeacherSubscription>): Promise<void> {
+  try {
+    // 1. إرسال خفي للسيرفر المحلي إن وجد
+    fetch('/api/subscriptions/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscriptions: map })
+    }).catch(() => {});
+
+    // 2. إرسال للسحابة العامة لجميع زوار Netlify
+    await fetch(GLOBAL_CLOUD_SYNC_BIN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(map)
+    });
+  } catch (err) {
+    console.warn('Cloud sync push warning:', err);
+  }
+}
+
+async function fetchFromCloudSyncStore(): Promise<Record<string, TeacherSubscription> | null> {
+  try {
+    const res = await fetch(GLOBAL_CLOUD_SYNC_BIN, { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return data as Record<string, TeacherSubscription>;
+      }
+    }
+  } catch (err) {
+    console.warn('Cloud sync fetch warning:', err);
+  }
+  return null;
+}
+
 export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): void {
   // الحماية الصارمة لحساب المدير قبل الحفظ
   map[ADMIN_EMAIL] = {
@@ -276,59 +314,77 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+  
   try {
     window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: map }));
   } catch {}
+
+  // رفع البيانات إلى السحابة فوراً في الخلفية
+  pushToCloudSyncStore(map);
 }
 
 /**
- * مزامنة وجلب جميع الاشتراكات المركزية من السيرفر وتحديث التخزين المحلي
+ * مزامنة وجلب جميع الاشتراكات المركزية من السيرفر والسحابة وتحديث التخزين المحلي
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
+  const local = loadAllSubscriptions();
+  const merged: Record<string, TeacherSubscription> = { ...local };
+  let localDeleted = getDeletedEmails();
+
+  // 1. مزامنة مع المخزن السحابي العالمي المباشر لـ Netlify
+  try {
+    const cloudSubs = await fetchFromCloudSyncStore();
+    if (cloudSubs) {
+      Object.keys(cloudSubs).forEach(email => {
+        const cleanEmail = email.toLowerCase();
+        if (!localDeleted.includes(cleanEmail)) {
+          merged[cleanEmail] = cloudSubs[email];
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Cloud fetch warning:', e);
+  }
+
+  // 2. مزامنة مع السيرفر المحلي إن كان شغالاً
   try {
     const res = await fetch('/api/subscriptions');
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.subscriptions) {
         const serverSubs = data.subscriptions as Record<string, TeacherSubscription>;
-        const local = loadAllSubscriptions();
-        let localDeleted = getDeletedEmails();
-
-        const merged: Record<string, TeacherSubscription> = { ...local };
-
         Object.keys(serverSubs).forEach(email => {
           const cleanEmail = email.toLowerCase();
-          merged[cleanEmail] = serverSubs[email];
-          localDeleted = localDeleted.filter(e => e !== cleanEmail);
+          if (!localDeleted.includes(cleanEmail)) {
+            merged[cleanEmail] = serverSubs[email];
+          }
         });
-
-        localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(localDeleted));
-
-        // حماية حساب المدير
-        merged[ADMIN_EMAIL] = local[ADMIN_EMAIL] || {
-          teacherEmail: ADMIN_EMAIL,
-          teacherName: 'الأستاذ المشرف djazild',
-          planId: 'lifetime',
-          status: 'active',
-          amountDZD: 0,
-          isLifetime: true,
-          expiresAt: null,
-          activatedAt: new Date('2024-01-01').toISOString(),
-          activatedByAdminEmail: ADMIN_EMAIL,
-          adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
-        };
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-        try {
-          window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: merged }));
-        } catch {}
-        return merged;
       }
     }
   } catch (err) {
-    console.warn('Network sync with /api/subscriptions failed, using local cache:', err);
+    console.warn('Local API sync failed, using cloud and local cache:', err);
   }
-  return loadAllSubscriptions();
+
+  // حماية حساب المدير
+  merged[ADMIN_EMAIL] = local[ADMIN_EMAIL] || {
+    teacherEmail: ADMIN_EMAIL,
+    teacherName: 'الأستاذ المشرف djazild',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: new Date('2024-01-01').toISOString(),
+    activatedByAdminEmail: ADMIN_EMAIL,
+    adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  try {
+    window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: merged }));
+  } catch {}
+
+  return merged;
 }
 
 /**
