@@ -609,13 +609,24 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                   <button
                     type="button"
                     onClick={() => {
+                      setCustomEmail('droidy.dz@gmail.com');
+                      setCustomName('أ. عبد الجليل');
+                    }}
+                    className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-indigo-500/40 text-indigo-300 text-right text-[11px] transition"
+                  >
+                    <strong className="block text-white">أ. عبد الجليل (تسجيل جديد)</strong>
+                    <span className="text-[10px] text-slate-400 font-mono">droidy.dz@gmail.com</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       const id = Math.floor(100 + Math.random() * 900);
                       setCustomEmail(`prof.new${id}@gmail.com`);
                       setCustomName(`أ. أستاذ جديد (${id})`);
                     }}
                     className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-blue-500/30 text-blue-300 text-right text-[11px] transition"
                   >
-                    <strong className="block text-white">حساب أستاذ جديد</strong>
+                    <strong className="block text-white">حساب أستاذ جديد عشوائي</strong>
                     <span className="text-[10px] text-slate-400">لاختبار الطلب والتفعيل</span>
                   </button>
                 </div>

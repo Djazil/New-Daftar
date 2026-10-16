@@ -221,29 +221,6 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     }
   };
 
-  const droidyTeacherSub: TeacherSubscription = {
-    teacherEmail: 'droidy.dz@gmail.com',
-    teacherName: 'أ. عبد الجليل (droidy.dz)',
-    phoneNumber: '0656636033',
-    planId: '6months',
-    status: 'pending',
-    amountDZD: 3000,
-    isLifetime: false,
-    requestedAt: new Date().toISOString(),
-    expiresAt: null,
-    adminNotes: 'حساب جديد تم تسجيله عبر Google بانتظار التفعيل من المشرف',
-    paymentProof: {
-      transactionRef: 'BM-2026-99210',
-      senderName: 'عبد الجليل',
-      phoneNumber: '0656636033',
-      ripNumber: '007 99999 0023456789 25',
-      amount: 3000,
-      paidAt: new Date().toISOString(),
-      receiptNote: 'حوالة بريدي موب بانتظار التأكيد والتفعيل',
-      sentViaWhatsApp: true
-    }
-  };
-
   const hdjazil95Sub: TeacherSubscription = {
     teacherEmail: 'hdjazil95@gmail.com',
     teacherName: 'أ. عبد الجليل (hdjazil95)',
@@ -263,7 +240,6 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     [ADMIN_EMAIL]: adminSub,
     ['prof.ahmed@gmail.com']: sampleTeacherSub,
     ['prof.karim.dz@gmail.com']: pendingTeacherSub,
-    ['droidy.dz@gmail.com']: droidyTeacherSub,
     ['hdjazil95@gmail.com']: hdjazil95Sub
   };
 }
@@ -288,11 +264,6 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
   if (!map['hdjazil95@gmail.com'] || map['hdjazil95@gmail.com'].status !== 'active') {
     map['hdjazil95@gmail.com'] = initial['hdjazil95@gmail.com'];
     saveSubscriptionToFirestore(initial['hdjazil95@gmail.com']);
-  }
-
-  if (!map['droidy.dz@gmail.com']) {
-    map['droidy.dz@gmail.com'] = initial['droidy.dz@gmail.com'];
-    saveSubscriptionToFirestore(initial['droidy.dz@gmail.com']);
   }
 
   return map;
@@ -371,7 +342,6 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
   // Un-blacklist primary test accounts
-  removeDeletedEmail('droidy.dz@gmail.com');
   removeDeletedEmail('hdjazil95@gmail.com');
 
   const local = loadAllSubscriptions();
