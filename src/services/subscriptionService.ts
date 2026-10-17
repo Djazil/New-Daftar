@@ -3,6 +3,8 @@ import {
   saveSubscriptionToFirestore,
   fetchSubscriptionsFromFirestore,
   deleteSubscriptionFromFirestore,
+  fetchDeletedSubscriptionsFromFirestore,
+  removeDeletedSubscriptionFromFirestore,
   subscribeToAllSubscriptionsInFirestore
 } from './firebaseSubscriptionService';
 
@@ -10,58 +12,13 @@ export const ADMIN_EMAIL = 'djazild@gmail.com';
 
 export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
   {
-    id: '1month',
-    name: 'اشتراك شهر واحد',
-    durationLabel: 'شهر تقويمي واحد (30 يوماً)',
-    durationMonths: 1,
-    durationDays: 30,
-    priceDZD: 800,
-    features: [
-      'الوصول الكامل إلى جميع الأقسام والطلبة',
-      'دفتر الملاحظات والمتابعة اليومية',
-      'حساب المعدلات والرقمنة الفورية',
-      'تصدير كشوف النقاط وExcel',
-      'دعم فني وتحديثات مستمرة'
-    ]
-  },
-  {
-    id: '6months',
-    name: 'اشتراك 6 أشهر',
-    durationLabel: 'سداسي دراسي كامل (6 أشهر / 180 يوماً)',
-    durationMonths: 6,
-    durationDays: 180,
-    priceDZD: 3000,
-    popular: true,
-    features: [
-      'تغطية فصلين دراسيين كاملين',
-      'توفير 1800 دج مقارنة بالاشتراك الشهري',
-      'رادار اليقظة والغيابات والتقارير الذكية',
-      'مخطط الجلوس والتوزيع بالأفواج',
-      'نسخ احتياطي واسترجاع فوري للبيانات'
-    ]
-  },
-  {
-    id: '1year',
-    name: 'اشتراك سنة كاملة',
-    durationLabel: 'موسم دراسي كامل (12 شهراً / 365 يوماً)',
-    durationMonths: 12,
-    durationDays: 365,
-    priceDZD: 5000,
-    features: [
-      'تغطية العام الدراسي بالكامل مع العطل',
-      'توفير 4600 دج مقارنة بالشهري',
-      'جميع ميزات الدفتر الذكي بدون أي قيود',
-      'توليد تقارير مجالس الأقسام وتحليل البكالوريا',
-      'أولوية الدعم الفني المباشر من الإدارة'
-    ]
-  },
-  {
     id: 'lifetime',
     name: 'اشتراك مدى الحياة',
     durationLabel: 'تفعيل دائم غير محدود مدى الحياة',
     durationMonths: null,
     durationDays: null,
-    priceDZD: 10000,
+    priceDZD: 5000,
+    popular: true,
     features: [
       'تفعيل غير قابل للانتهاء أبداً',
       'دفع لمرة واحدة واستخدام دائم لسنوات',
@@ -94,25 +51,24 @@ export const BARIDIMOB_CONFIG = {
  * تجهيز رابط واتساب الرسمي لطلب تفعيل الاشتراك بالترميز الصحيح
  */
 export function createWhatsAppActivationLink(data: {
-  planId: SubscriptionPlanId;
-  planName: string;
-  priceDZD: number;
+  planId?: SubscriptionPlanId;
+  planName?: string;
+  priceDZD?: number;
   email: string;
   fullName: string;
-  phone: string;
+  phone?: string;
   notes?: string;
 }): string {
   const cleanEmail = data.email.trim();
   const cleanName = data.fullName.trim();
-  const cleanPhone = data.phone.trim();
+  const cleanPhone = data.phone?.trim() || '';
   const cleanNotes = data.notes?.trim() || '';
 
   const messageLines = [
     'طلب تفعيل اشتراك في «الدفتر اليومي الذكي للأستاذ»:',
-    `- نوع الاشتراك: ${data.planName} (${data.priceDZD} دج)`,
     `- البريد الإلكتروني (Gmail): ${cleanEmail}`,
     `- الاسم واللقب: ${cleanName}`,
-    `- رقم الهاتف: ${cleanPhone}`,
+    cleanPhone ? `- رقم الهاتف: ${cleanPhone}` : '',
     cleanNotes ? `- ملاحظات إضافية: ${cleanNotes}` : '',
     '(سأقوم بإرفاق صورة وصل الدفع عبر بريدي موب في هذه المحادثة حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب)'
   ].filter(Boolean);
@@ -125,8 +81,7 @@ export function createWhatsAppActivationLink(data: {
  * رابط مباشر لفتح محادثة واتساب لإرسال وصل الدفع
  */
 export function createWhatsAppDirectReceiptLink(planName?: string, priceDZD?: number): string {
-  const planInfo = planName ? ` (${planName} — ${priceDZD} دج)` : '';
-  const fullMessage = `السلام عليكم ورحمة الله،\nأود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ»${planInfo}.\nسأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
+  const fullMessage = `السلام عليكم ورحمة الله،\nأود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ».\nسأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
 
   return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(fullMessage)}`;
 }
@@ -161,7 +116,7 @@ export function removeDeletedEmail(email: string): void {
   localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(list));
 }
 
-// تهيئة التخزين الأولي مع تفعيل دائم لحساب المدير
+// تهيئة التخزين الأولي مع تفعيل دائم لحساب المدير المشرف العام فقط
 function getInitialSubscriptions(): Record<string, TeacherSubscription> {
   const adminSub: TeacherSubscription = {
     teacherEmail: ADMIN_EMAIL,
@@ -176,24 +131,8 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
   };
 
-  const hdjazil95Sub: TeacherSubscription = {
-    teacherEmail: 'hdjazil95@gmail.com',
-    teacherName: 'أ. عبد الجليل (hdjazil95)',
-    phoneNumber: '0656636033',
-    planId: '1year',
-    status: 'active',
-    amountDZD: 5000,
-    isLifetime: false,
-    requestedAt: new Date().toISOString(),
-    activatedAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 365 * 86400000).toISOString(),
-    activatedByAdminEmail: ADMIN_EMAIL,
-    adminNotes: 'حساب مفعل يدويًا بنجاح من طرف المشرف الرئيسي (اشتراك سنوي كامل)'
-  };
-
   return {
-    [ADMIN_EMAIL]: adminSub,
-    ['hdjazil95@gmail.com']: hdjazil95Sub
+    [ADMIN_EMAIL]: adminSub
   };
 }
 
@@ -208,33 +147,34 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
     }
   }
 
-  // ضمان وجود حساب المدير وحساب hdjazil95 المكتمل التفعيل
+  // ضمان وجود حساب المدير دائماً
   const initial = getInitialSubscriptions();
   if (!map[ADMIN_EMAIL] || map[ADMIN_EMAIL].status !== 'active' || !map[ADMIN_EMAIL].isLifetime) {
     map[ADMIN_EMAIL] = initial[ADMIN_EMAIL];
   }
 
-  if (!map['hdjazil95@gmail.com'] || map['hdjazil95@gmail.com'].status !== 'active') {
-    map['hdjazil95@gmail.com'] = initial['hdjazil95@gmail.com'];
-    saveSubscriptionToFirestore(initial['hdjazil95@gmail.com']);
-  }
+  // تطبيق القائمة السوداء للمحذوفات نهائياً
+  const deleted = getDeletedEmails();
+  deleted.forEach(delEmail => {
+    if (delEmail !== ADMIN_EMAIL.toLowerCase()) {
+      delete map[delEmail];
+    }
+  });
 
   return map;
 }
 
-// مخزن سحابي مباشر متوافق مع Netlify لمزامنة الاشتراكات الحية عبر كافة الأجهزة والمتصفحات
+// مخزن سحابي مباشر لمزامنة الاشتراكات الحية
 const GLOBAL_CLOUD_SYNC_BIN = 'https://api.npoint.io/469493a74a1e948834a3';
 
 async function pushToCloudSyncStore(map: Record<string, TeacherSubscription>): Promise<void> {
   try {
-    // 1. إرسال خفي للسيرفر المحلي إن وجد
     fetch('/api/subscriptions/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscriptions: map })
     }).catch(() => {});
 
-    // 2. إرسال للسحابة العامة لجميع زوار Netlify
     await fetch(GLOBAL_CLOUD_SYNC_BIN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -261,7 +201,6 @@ async function fetchFromCloudSyncStore(): Promise<Record<string, TeacherSubscrip
 }
 
 export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): void {
-  // الحماية الصارمة لحساب المدير قبل الحفظ
   map[ADMIN_EMAIL] = {
     teacherEmail: ADMIN_EMAIL,
     teacherName: 'الأستاذ المشرف djazild',
@@ -281,12 +220,10 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
     window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: map }));
   } catch {}
 
-  // رفع البيانات إلى قواعد بيانات Firebase Firestore فوراً لكل اشتراك
   Object.values(map).forEach(sub => {
     saveSubscriptionToFirestore(sub);
   });
 
-  // رفع البيانات إلى السحابة فوراً في الخلفية
   pushToCloudSyncStore(map);
 }
 
@@ -294,15 +231,20 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
  * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسحابة والسيرفر
  */
 export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
-  // Un-blacklist primary permanent admin test accounts
   removeDeletedEmail(ADMIN_EMAIL);
-  removeDeletedEmail('hdjazil95@gmail.com');
 
   const local = loadAllSubscriptions();
   const merged: Record<string, TeacherSubscription> = { ...local };
   let localDeleted = getDeletedEmails();
 
-  // 1. مزامنة رئيسية مع قواعد بيانات Firebase Firestore الرسمية
+  // جلب المحذوفات من Firestore لمطابقتها
+  try {
+    const remoteDeleted = await fetchDeletedSubscriptionsFromFirestore();
+    remoteDeleted.forEach(d => addDeletedEmail(d));
+    localDeleted = getDeletedEmails();
+  } catch {}
+
+  // 1. مزامنة رئيسية مع Firestore
   try {
     const firestoreSubs = await fetchSubscriptionsFromFirestore();
     if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
@@ -317,22 +259,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     console.warn('Firestore fetch warning:', e);
   }
 
-  // 2. مزامنة مع المخزن السحابي المباشر لـ Netlify
-  try {
-    const cloudSubs = await fetchFromCloudSyncStore();
-    if (cloudSubs) {
-      Object.keys(cloudSubs).forEach(email => {
-        const cleanEmail = email.toLowerCase();
-        if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
-          merged[cleanEmail] = cloudSubs[email];
-        }
-      });
-    }
-  } catch (e) {
-    console.warn('Cloud fetch warning:', e);
-  }
-
-  // 3. مزامنة مع السيرفر المحلي إن كان شغالاً
+  // 2. مزامنة مع السيرفر المحلي
   try {
     const res = await fetch('/api/subscriptions');
     if (res.ok) {
@@ -351,14 +278,13 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     console.warn('Local API sync failed, using firestore/cloud/local cache:', err);
   }
 
-  // تطبيق القائمة السوداء للمحذوفات نهائياً لحذفها من الكاش والواجهة
+  // حذف الحسابات المحذوفة من المرئية
   localDeleted.forEach(deletedEmail => {
     if (deletedEmail !== ADMIN_EMAIL.toLowerCase()) {
       delete merged[deletedEmail];
     }
   });
 
-  // حماية حساب المدير المشرف العام
   merged[ADMIN_EMAIL] = local[ADMIN_EMAIL] || {
     teacherEmail: ADMIN_EMAIL,
     teacherName: 'الأستاذ المشرف djazild',
@@ -369,7 +295,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     expiresAt: null,
     activatedAt: new Date('2024-01-01').toISOString(),
     activatedByAdminEmail: ADMIN_EMAIL,
-    adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
+    adminNotes: 'حساب المشرف العام والمدير الرئيسي'
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
@@ -381,8 +307,7 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
 }
 
 /**
- * تسجيل أو تحديث حساب الأستاذ تلقائياً عند تسجيل الدخول عبر Google
- * يضمن ظهور الأستاذ فوراً في لوحة المدير وقسم التفعيل
+ * تسجيل أو تحديث حساب الأستاذ عند تسجيل الدخول عبر Google
  */
 export async function registerOrUpdateGoogleUser(user: { email: string; name: string }): Promise<TeacherSubscription> {
   const cleanEmail = user.email.trim().toLowerCase();
@@ -391,36 +316,50 @@ export async function registerOrUpdateGoogleUser(user: { email: string; name: st
     return getTeacherSubscription(ADMIN_EMAIL);
   }
 
-  // Remove from deleted list if re-registering
-  removeDeletedEmail(cleanEmail);
+  const deleted = getDeletedEmails();
+  // إذا كان الحساب محذوفاً سابقاً، يرجع كـ deleted للحد من إعادة الإنشاء التلقائية
+  if (deleted.includes(cleanEmail)) {
+    return {
+      teacherEmail: cleanEmail,
+      teacherName: user.name || cleanEmail.split('@')[0],
+      planId: 'none',
+      status: 'deleted',
+      amountDZD: 0,
+      expiresAt: null,
+      isLifetime: false,
+      adminNotes: 'حساب محذوف سابقاً من طرف الإدارة'
+    };
+  }
 
   const all = loadAllSubscriptions();
   const existing = all[cleanEmail];
 
-  // إذا كان الحساب غير مفعل أو غير موجود، نسجله كطلب جديد للتفعيل حتى يظهر للمدير
-  const finalStatus: SubscriptionStatus = existing?.status === 'active' ? 'active' : 'pending';
+  // الحساب المنسخ يبقى مفعل مدى الحياة إذا تم تفعيله مسبقاً من الإدارة
+  const isAlreadyActive = existing && existing.status === 'active';
+  const finalStatus: SubscriptionStatus = isAlreadyActive ? 'active' : 'pending';
 
   const registeredSub: TeacherSubscription = {
     teacherEmail: cleanEmail,
     teacherName: user.name || existing?.teacherName || cleanEmail.split('@')[0],
     phoneNumber: existing?.phoneNumber || '',
-    planId: existing?.planId || '6months',
+    planId: 'lifetime',
     status: finalStatus,
-    amountDZD: existing?.amountDZD || 3000,
+    amountDZD: existing?.amountDZD || 5000,
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || new Date().toISOString(),
-    activatedAt: finalStatus === 'active' ? existing?.activatedAt : undefined,
-    expiresAt: finalStatus === 'active' ? (existing?.expiresAt || null) : null,
-    isLifetime: finalStatus === 'active' ? (existing?.isLifetime || false) : false,
-    adminNotes: existing?.adminNotes || 'حساب أستاذ جديد تم تسجيله عبر Google بانتظار التفعيل'
+    activatedAt: finalStatus === 'active' ? (existing?.activatedAt || new Date().toISOString()) : undefined,
+    expiresAt: null,
+    isLifetime: true,
+    adminNotes: existing?.adminNotes || 'تم إنشاء حساب الأستاذ. أرسل وصل الدفع عبر واتساب وانتظر تفعيل الحساب.'
   };
 
   all[cleanEmail] = registeredSub;
   saveAllSubscriptions(all);
 
-  // إرسال تسجيل الحساب فوراً للسيرفر المركزي
+  await saveSubscriptionToFirestore(registeredSub);
+
   try {
-    const res = await fetch('/api/subscriptions/register', {
+    await fetch('/api/subscriptions/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -432,29 +371,19 @@ export async function registerOrUpdateGoogleUser(user: { email: string; name: st
         notes: registeredSub.adminNotes
       })
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.subscription) {
-        const latest = loadAllSubscriptions();
-        latest[cleanEmail] = data.subscription;
-        saveAllSubscriptions(latest);
-        return data.subscription;
-      }
-    }
   } catch (err) {
-    console.warn('Network auto-register to /api/subscriptions/register failed, local saved:', err);
+    console.warn('Network auto-register to /api/subscriptions/register failed:', err);
   }
 
   return registeredSub;
 }
 
 /**
- * الحصول على حالة اشتراك الأستاذ الحالي مع فحص دقيق لتاريخ الانتهاء
+ * جلب بيانات اشتراك الأستاذ مع معالجة الحالات
  */
 export function getTeacherSubscription(email: string): TeacherSubscription {
   const cleanEmail = email.trim().toLowerCase();
-  
-  // حساب المدير دائم التفعيل
+
   if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
     return {
       teacherEmail: ADMIN_EMAIL,
@@ -467,6 +396,20 @@ export function getTeacherSubscription(email: string): TeacherSubscription {
       activatedAt: new Date('2024-01-01').toISOString(),
       activatedByAdminEmail: ADMIN_EMAIL,
       adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
+    };
+  }
+
+  const deleted = getDeletedEmails();
+  if (deleted.includes(cleanEmail)) {
+    return {
+      teacherEmail: cleanEmail,
+      teacherName: '',
+      planId: 'none',
+      status: 'deleted',
+      amountDZD: 0,
+      expiresAt: null,
+      isLifetime: false,
+      adminNotes: 'هذا الحساب محذوف. يرجى التواصل مع الإدارة إذا كنت تريد استعادة الوصول.'
     };
   }
 
@@ -485,88 +428,60 @@ export function getTeacherSubscription(email: string): TeacherSubscription {
     };
   }
 
-  // التحقق الحقيقي من تاريخ الانتهاء
-  if (sub.status === 'active' && !sub.isLifetime && sub.expiresAt) {
-    const expireTime = new Date(sub.expiresAt).getTime();
-    if (Date.now() > expireTime) {
-      const expiredSub: TeacherSubscription = {
-        ...sub,
-        status: 'expired'
-      };
-      all[cleanEmail] = expiredSub;
-      saveAllSubscriptions(all);
-      return expiredSub;
-    }
-  }
-
   return sub;
 }
 
 /**
- * إرسال طلب اشتراك مع إثبات الدفع عبر بريدي موب من طرف الأستاذ
+ * إرسال طلب اشتراك مع إثبات الدفع عبر بريدي موب
  */
 export function submitSubscriptionRequest(
   teacherEmail: string,
   teacherName: string,
-  planId: SubscriptionPlanId,
+  planId: SubscriptionPlanId = 'lifetime',
   proof: PaymentProof
 ): TeacherSubscription {
   const cleanEmail = teacherEmail.trim().toLowerCase();
-  const tier = SUBSCRIPTION_TIERS.find(t => t.id === planId) || SUBSCRIPTION_TIERS[0];
   const all = loadAllSubscriptions();
 
   const newSub: TeacherSubscription = {
     teacherEmail: cleanEmail,
     teacherName: teacherName || cleanEmail.split('@')[0],
     phoneNumber: proof.phoneNumber || '',
-    planId: tier.id,
+    planId: 'lifetime',
     status: 'pending',
-    amountDZD: tier.priceDZD,
+    amountDZD: proof.amount || 5000,
     paymentProof: proof,
     requestedAt: new Date().toISOString(),
     expiresAt: null,
-    isLifetime: tier.id === 'lifetime'
+    isLifetime: true
   };
 
   all[cleanEmail] = newSub;
   saveAllSubscriptions(all);
 
-  // إرسال فوري للسيرفر المركزي عبر الشبكة
   fetch('/api/subscriptions/request', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       teacherEmail: cleanEmail,
       teacherName: teacherName || cleanEmail.split('@')[0],
-      planId: tier.id,
+      planId: 'lifetime',
       proof
     })
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (data.success && data.subscription) {
-        const latest = loadAllSubscriptions();
-        latest[cleanEmail] = data.subscription;
-        saveAllSubscriptions(latest);
-      }
-    })
-    .catch(e => console.warn('Background sync to /api/subscriptions/request failed:', e));
+  }).catch(e => console.warn('Background sync failed:', e));
 
   return newSub;
 }
 
-/**
- * دالة مساعدة مع Promise لإرسال الطلب للسيرفر والانتظار لضمان الوصول
- */
 export async function submitSubscriptionRequestAsync(
   teacherEmail: string,
   teacherName: string,
-  planId: SubscriptionPlanId,
+  planId: SubscriptionPlanId = 'lifetime',
   proof: PaymentProof
 ): Promise<TeacherSubscription> {
   const sub = submitSubscriptionRequest(teacherEmail, teacherName, planId, proof);
   try {
-    const res = await fetch('/api/subscriptions/request', {
+    await fetch('/api/subscriptions/request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -576,17 +491,8 @@ export async function submitSubscriptionRequestAsync(
         proof
       })
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.subscription) {
-        const latest = loadAllSubscriptions();
-        latest[sub.teacherEmail] = data.subscription;
-        saveAllSubscriptions(latest);
-        return data.subscription;
-      }
-    }
   } catch (err) {
-    console.warn('Network submit failed, local copy saved:', err);
+    console.warn('Network submit failed:', err);
   }
   return sub;
 }
@@ -594,211 +500,79 @@ export async function submitSubscriptionRequestAsync(
 export function isCallerAuthorized(email?: string): boolean {
   if (!email) return true;
   const clean = email.trim().toLowerCase();
-  if (
+  return (
     clean === ADMIN_EMAIL.toLowerCase() ||
     clean === 'hdjazil95@gmail.com' ||
     clean.includes('admin') ||
-    clean === 'djazil'
-  ) {
-    return true;
-  }
-  return localStorage.getItem('smart_notebook_is_admin_device') === 'true';
+    localStorage.getItem('smart_notebook_is_admin_device') === 'true'
+  );
 }
 
 /**
- * تفعيل الاشتراك يدوياً من طرف المشرف
+ * تفعيل الاشتراك مدى الحياة يدوياً من طرف المشرف djazild@gmail.com
  */
 export async function activateTeacherSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
-  planId: SubscriptionPlanId,
   options?: {
-    customDays?: number;
-    customPriceDZD?: number;
     adminNotes?: string;
   }
 ): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
   if (!isCallerAuthorized(currentCallerEmail)) {
     return {
       success: false,
-      message: 'عذراً! لا تملك صلاحيات المشرف لتفعيل أو تعديل الاشتراكات. العملية محظورة أمنياً.'
+      message: 'عملية غير مصرح بها. تتطلب صلاحيات المشرف djazild@gmail.com'
     };
   }
 
   const targetClean = targetTeacherEmail.trim().toLowerCase();
+  removeDeletedEmail(targetClean);
+  await removeDeletedSubscriptionFromFirestore(targetClean);
+
   const all = loadAllSubscriptions();
-  const tier = SUBSCRIPTION_TIERS.find(t => t.id === planId) || SUBSCRIPTION_TIERS[0];
   const now = new Date();
-
-  let expiresAt: string | null = null;
-  const isLifetime = planId === 'lifetime';
-
-  if (!isLifetime) {
-    const nowMs = now.getTime();
-    let daysToAdd = options?.customDays || tier.durationDays || 30;
-    
-    if (planId === '1month') {
-      const future = new Date(now);
-      future.setMonth(future.getMonth() + 1);
-      expiresAt = future.toISOString();
-    } else if (planId === '6months') {
-      const future = new Date(now);
-      future.setMonth(future.getMonth() + 6);
-      expiresAt = future.toISOString();
-    } else if (planId === '1year') {
-      const future = new Date(now);
-      future.setFullYear(future.getFullYear() + 1);
-      expiresAt = future.toISOString();
-    } else {
-      expiresAt = new Date(nowMs + daysToAdd * 86400000).toISOString();
-    }
-  }
-
   const existing = all[targetClean];
+
   const updated: TeacherSubscription = {
     teacherEmail: targetClean,
     teacherName: existing?.teacherName || targetClean.split('@')[0],
     phoneNumber: existing?.phoneNumber || '',
-    planId,
+    planId: 'lifetime',
     status: 'active',
-    amountDZD: options?.customPriceDZD !== undefined ? options.customPriceDZD : tier.priceDZD,
+    amountDZD: existing?.amountDZD || 5000,
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || now.toISOString(),
     activatedAt: now.toISOString(),
-    expiresAt,
+    expiresAt: null,
     activatedByAdminEmail: ADMIN_EMAIL,
-    adminNotes: options?.adminNotes || 'تم التفعيل والتحقق من الحوالة البريدية بنجاح من طرف المشرف الرئيسي.',
-    isLifetime
+    adminNotes: options?.adminNotes || 'حسابك مفعّل. يمكنك الدخول إلى الدفتر.',
+    isLifetime: true
   };
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
   await saveSubscriptionToFirestore(updated);
 
-  // تحديث السيرفر المركزي
   fetch('/api/subscriptions/activate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       currentCallerEmail: ADMIN_EMAIL,
       targetTeacherEmail: targetClean,
-      planId,
+      planId: 'lifetime',
       options
     })
-  }).catch(e => console.warn('Background sync to /api/subscriptions/activate failed:', e));
+  }).catch(e => console.warn('Background sync activate failed:', e));
 
   return {
     success: true,
-    message: `تم تفعيل اشتراك الأستاذ (${targetClean}) بنجاح بنوع (${tier.name}).`,
+    message: `حسابك مفعّل. تم تفعيل حساب الأستاذ (${targetClean}) مدى الحياة بنجاح.`,
     subscription: updated
   };
 }
 
 /**
- * إنهاء أو إلغاء تفعيل اشتراك أستاذ من طرف المشرف
- */
-export async function revokeOrExpireSubscription(
-  currentCallerEmail: string,
-  targetTeacherEmail: string,
-  reason: string = 'إنهاء يدوي من الإدارة'
-): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
-  if (!isCallerAuthorized(currentCallerEmail)) {
-    return {
-      success: false,
-      message: 'عملية غير مصرح بها. يتطلب صلاحيات المشرف العام.'
-    };
-  }
-
-  const targetClean = targetTeacherEmail.trim().toLowerCase();
-  if (targetClean === ADMIN_EMAIL.toLowerCase()) {
-    return {
-      success: false,
-      message: 'لا يمكن إلغاء تفعيل حساب المدير الرئيسي، فهو مفعل مدى الحياة.'
-    };
-  }
-
-  const all = loadAllSubscriptions();
-  const existing = all[targetClean];
-  if (!existing) {
-    return { success: false, message: 'لم يتم العثور على اشتراك لهذا الأستاذ.' };
-  }
-
-  const updated: TeacherSubscription = {
-    ...existing,
-    status: 'expired',
-    expiresAt: new Date(Date.now() - 1000).toISOString(),
-    adminNotes: `تم إنهاء الاشتراك: ${reason}`
-  };
-
-  all[targetClean] = updated;
-  saveAllSubscriptions(all);
-  await saveSubscriptionToFirestore(updated);
-
-  // تحديث السيرفر المركزي
-  fetch('/api/subscriptions/expire', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      currentCallerEmail: ADMIN_EMAIL,
-      targetTeacherEmail: targetClean,
-      reason
-    })
-  }).catch(e => console.warn('Background sync to /api/subscriptions/expire failed:', e));
-
-  return {
-    success: true,
-    message: `تم إنهاء اشتراك (${targetClean}) بنجاح، وستطبق قيود الوصول فوراً مع الحفاظ التام على بياناته.`,
-    subscription: updated
-  };
-}
-
-/**
- * توليد طلب اشتراك تجريبي فوري للتحقق من وصول الاشتراكات إلى لوحة المدير
- */
-export async function generateTestSubscription(): Promise<TeacherSubscription | null> {
-  try {
-    const res = await fetch('/api/subscriptions/generate-test-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.subscription) {
-        const latest = loadAllSubscriptions();
-        latest[data.subscription.teacherEmail] = data.subscription;
-        saveAllSubscriptions(latest);
-        await saveSubscriptionToFirestore(data.subscription);
-        return data.subscription;
-      }
-    }
-  } catch (err) {
-    console.error('Failed to generate test subscription:', err);
-  }
-
-  // مولد احتياطي محلي في حال عدم توفر الشبكة
-  const randomId = Math.floor(1000 + Math.random() * 9000);
-  const testEmail = `prof.test${randomId}@gmail.com`;
-  const sub = submitSubscriptionRequest(
-    testEmail,
-    `أ. تجريبي محلي (${randomId})`,
-    '6months',
-    {
-      transactionRef: `BM-LOCAL-${randomId}`,
-      senderName: `أ. تجريبي (${randomId})`,
-      phoneNumber: '0655' + randomId,
-      ripNumber: '007 99999 0023456789 25',
-      amount: 3000,
-      paidAt: new Date().toISOString(),
-      receiptNote: 'حوالة تجريبية لاختبار لوحة تحكم المدير',
-      sentViaWhatsApp: true
-    }
-  );
-  await saveSubscriptionToFirestore(sub);
-  return sub;
-}
-
-/**
- * فحص الصلاحيات الشاملة للأستاذ
+ * فحص الصلاحيات الشاملة للأستاذ مع النصوص المبسطة
  */
 export function checkTeacherFeatureAccess(email?: string | null): {
   hasAccess: boolean;
@@ -810,7 +584,7 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     return {
       hasAccess: false,
       status: 'none',
-      reason: 'يجب تسجيل الدخول بحساب Google أولاً للتحقق من الاشتراك.',
+      reason: 'مرحبًا بك. سجّل الدخول باستخدام Google.',
       subscription: {
         teacherEmail: '',
         teacherName: '',
@@ -825,25 +599,6 @@ export function checkTeacherFeatureAccess(email?: string | null): {
 
   const clean = email.trim().toLowerCase();
   
-  // إذا كان الحساب محذوفاً بقرار المشرف، يتم توقيف الوصول وتلغى الصلاحيات فوراً
-  const deletedList = getDeletedEmails();
-  if (deletedList.includes(clean) && clean !== ADMIN_EMAIL.toLowerCase()) {
-    return {
-      hasAccess: false,
-      status: 'none',
-      reason: 'تم إلغاء تفعيل هذا الحساب وحذفه نهائياً بقرار من إدارة المنصة.',
-      subscription: {
-        teacherEmail: clean,
-        teacherName: '',
-        planId: 'none',
-        status: 'none',
-        amountDZD: 0,
-        expiresAt: null,
-        isLifetime: false
-      }
-    };
-  }
-
   if (clean === ADMIN_EMAIL.toLowerCase()) {
     const adminSub = getTeacherSubscription(ADMIN_EMAIL);
     return {
@@ -854,13 +609,31 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     };
   }
 
+  const deletedList = getDeletedEmails();
+  if (deletedList.includes(clean)) {
+    return {
+      hasAccess: false,
+      status: 'deleted',
+      reason: 'هذا الحساب محذوف. يرجى التواصل مع الإدارة إذا كنت تريد استعادة الوصول.',
+      subscription: {
+        teacherEmail: clean,
+        teacherName: '',
+        planId: 'none',
+        status: 'deleted',
+        amountDZD: 0,
+        expiresAt: null,
+        isLifetime: false
+      }
+    };
+  }
+
   const sub = getTeacherSubscription(clean);
 
   if (sub.status === 'active') {
     return {
       hasAccess: true,
       status: 'active',
-      reason: sub.isLifetime ? 'اشتراك مدى الحياة مفعل.' : `اشتراك نشط حتى ${new Date(sub.expiresAt!).toLocaleDateString('ar-DZ')}`,
+      reason: 'حسابك مفعّل. يمكنك الدخول إلى الدفتر.',
       subscription: sub
     };
   }
@@ -869,7 +642,7 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     return {
       hasAccess: false,
       status: 'pending',
-      reason: 'طلب الاشتراك قيد المراجعة والتحقق اليدوي من الإدارة عبر بريدي موب.',
+      reason: 'طلبك قيد المراجعة. ستتمكن من الدخول بعد تفعيل الحساب.',
       subscription: sub
     };
   }
@@ -878,16 +651,16 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     return {
       hasAccess: false,
       status: 'suspended',
-      reason: 'تم تعطيل حسابك مؤقتاً بقرار من إدارة المنصة. يرجى التواصل مع الدعم الفني أو المشرف للاستفسار أو إعادة التنشيط.',
+      reason: 'حسابك موقوف مؤقتاً. يرجى التواصل مع الإدارة.',
       subscription: sub
     };
   }
 
-  if (sub.status === 'expired') {
+  if (sub.status === 'deleted') {
     return {
       hasAccess: false,
-      status: 'expired',
-      reason: 'انتهت فترة اشتراكك في الدفتر الذكي. يرجى التجديد لمواصلة الاستفادة من الميزات المدفوعة مع بقاء بياناتك محفوظة بأمان.',
+      status: 'deleted',
+      reason: 'هذا الحساب محذوف. يرجى التواصل مع الإدارة إذا كنت تريد استعادة الوصول.',
       subscription: sub
     };
   }
@@ -895,13 +668,13 @@ export function checkTeacherFeatureAccess(email?: string | null): {
   return {
     hasAccess: false,
     status: 'none',
-    reason: 'لا يوجد اشتراك نشط. يرجى اختيار أحد عروض الاشتراك وتأكيد الدفع للاستفادة من المنصة.',
+    reason: 'تم إنشاء حسابك. أرسل وصل الدفع عبر واتساب.',
     subscription: sub
   };
 }
 
 /**
- * حذف حساب الأستاذ نهائياً من التخزين المحلي والسيرفر
+ * حذف حساب الأستاذ نهائياً وتوقيف صلاحياته فوراً
  */
 export async function deleteTeacherAccount(
   currentCallerEmail: string,
@@ -919,15 +692,15 @@ export async function deleteTeacherAccount(
   // 1. إضافة الحساب للقائمة السوداء للمحذوفات نهائياً
   addDeletedEmail(targetClean);
 
-  // 2. حذف الحساب من قائمة الاشتراكات المحلية والتحديث
+  // 2. حذف الحساب محلياً
   const all = loadAllSubscriptions();
   delete all[targetClean];
   saveAllSubscriptions(all);
 
-  // 3. مسح المقتطف الحقيقي من Firestore مباشرة
+  // 3. مسح المستند وإضافته لقائمة المحذوفات في Firestore
   await deleteSubscriptionFromFirestore(targetClean);
 
-  // 4. مسح جميع الملفات والبيانات المعزولة للأستاذ محلياً
+  // 4. مسح ملفات البيانات المحلية
   const cleanKey = targetClean.replace(/[^a-z0-9]/g, '_');
   try {
     localStorage.removeItem(`teacher_profile_${cleanKey}`);
@@ -937,25 +710,59 @@ export async function deleteTeacherAccount(
     localStorage.removeItem(`teacher_pdfs_${cleanKey}`);
   } catch {}
 
-  // 5. إشعار السيرفر والمخزن السحابي وتحديث الحدث المباشر
+  // 5. إشعار السيرفر
   fetch('/api/subscriptions/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ targetTeacherEmail: targetClean })
   }).catch(e => console.warn('Background sync delete failed:', e));
 
-  try {
-    window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: all }));
-  } catch {}
-
   return {
     success: true,
-    message: `تم إلغاء اشتراك وحذف حساب الأستاذ (${targetClean}) نهائياً وتوقيف الصلاحيات فوراً.`
+    message: `تم حذف الحساب نهائياً (${targetClean}) ولن يستطيع الدخول إلا بعد الاستعادة.`
   };
 }
 
 /**
- * تعطيل حساب الأستاذ مؤقتاً أو رفع التعطيل عنه
+ * استعادة حساب محذوف من طرف المدير
+ */
+export async function restoreTeacherAccount(
+  currentCallerEmail: string,
+  targetTeacherEmail: string
+): Promise<{ success: boolean; message: string }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
+    return { success: false, message: 'غير مصرح لك باستعادة الحسابات.' };
+  }
+
+  const targetClean = targetTeacherEmail.trim().toLowerCase();
+  removeDeletedEmail(targetClean);
+  await removeDeletedSubscriptionFromFirestore(targetClean);
+
+  const restoredSub: TeacherSubscription = {
+    teacherEmail: targetClean,
+    teacherName: targetClean.split('@')[0],
+    planId: 'lifetime',
+    status: 'pending',
+    amountDZD: 5000,
+    requestedAt: new Date().toISOString(),
+    expiresAt: null,
+    isLifetime: true,
+    adminNotes: 'تم استعادة الحساب المحذوف من طرف المشرف بانتظار التفعيل'
+  };
+
+  const all = loadAllSubscriptions();
+  all[targetClean] = restoredSub;
+  saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(restoredSub);
+
+  return {
+    success: true,
+    message: `تمت استعادة حساب (${targetClean}) بنجاح وتحويله لوضعية بانتظار التفعيل.`
+  };
+}
+
+/**
+ * تعليق/إيقاف حساب أستاذ مؤقتاً
  */
 export async function suspendTeacherAccount(
   currentCallerEmail: string,
@@ -984,86 +791,16 @@ export async function suspendTeacherAccount(
   const updated: TeacherSubscription = {
     ...existing,
     status: newStatus,
-    adminNotes: isSuspending
-      ? `حساب معطل مؤقتاً: ${reason}`
-      : `تم رفع التعطيل وتفعيل الحساب مجدداً من المشرف`
+    adminNotes: isSuspending ? `حسابك موقوف مؤقتاً. يرجى التواصل مع الإدارة.` : `حسابك مفعّل. يمكنك الدخول إلى الدفتر.`
   };
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
   await saveSubscriptionToFirestore(updated);
 
-  fetch('/api/subscriptions/suspend', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      targetTeacherEmail: targetClean,
-      reason,
-      suspend: isSuspending
-    })
-  }).catch(e => console.warn('Background sync suspend failed:', e));
-
   return {
     success: true,
-    message: isSuspending
-      ? `تم تعطيل حساب (${targetClean}) مؤقتاً وحجب الوصول.`
-      : `تم إلغاء تعطيل حساب (${targetClean}) وإعادة تنشيطه بنجاح.`,
-    subscription: updated
-  };
-}
-
-/**
- * تمديد فترة الاشتراك بـ عدد معين من الأيام
- */
-export async function extendTeacherSubscription(
-  currentCallerEmail: string,
-  targetTeacherEmail: string,
-  daysToAdd: number,
-  reason: string = 'تمديد الاشتراك من طرف المشرف'
-): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
-  if (!isCallerAuthorized(currentCallerEmail)) {
-    return { success: false, message: 'غير مصرح لك بتمديد الاشتراكات.' };
-  }
-
-  const targetClean = targetTeacherEmail.trim().toLowerCase();
-  const all = loadAllSubscriptions();
-  const existing = all[targetClean];
-  if (!existing) {
-    return { success: false, message: 'الحساب غير موجود' };
-  }
-
-  const now = new Date();
-  let currentExpiry = existing.expiresAt ? new Date(existing.expiresAt) : now;
-  if (currentExpiry.getTime() < now.getTime()) {
-    currentExpiry = now;
-  }
-
-  const newExpiry = new Date(currentExpiry.getTime() + daysToAdd * 86400000);
-
-  const updated: TeacherSubscription = {
-    ...existing,
-    status: 'active',
-    expiresAt: newExpiry.toISOString(),
-    adminNotes: `تم تمديد الاشتراك بـ ${daysToAdd} يوم: ${reason}`
-  };
-
-  all[targetClean] = updated;
-  saveAllSubscriptions(all);
-  await saveSubscriptionToFirestore(updated);
-
-  fetch('/api/subscriptions/extend', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      targetTeacherEmail: targetClean,
-      daysToAdd,
-      reason
-    })
-  }).catch(e => console.warn('Background sync extend failed:', e));
-
-  return {
-    success: true,
-    message: `تم تمديد اشتراك (${targetClean}) بـ ${daysToAdd} يوم بنجاح (حتى ${newExpiry.toLocaleDateString('ar-DZ')}).`,
+    message: isSuspending ? `تم إيقاف حساب (${targetClean}) مؤقتاً.` : `تمت إعادة تفعيل حساب (${targetClean}) بنجاح.`,
     subscription: updated
   };
 }

@@ -211,13 +211,13 @@ export default function TeacherSubscriptionPage({
           </div>
         )}
 
-        {subscription.status === 'expired' && (
+        {subscription.status === 'suspended' && (
           <div className="p-4 sm:p-5 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-200 flex items-start gap-3.5 shadow-sm">
             <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
             <div className="space-y-1 text-xs">
-              <strong className="text-sm font-black text-rose-300 block">انتهت فترة اشتراكك في الدفتر الذكي</strong>
+              <strong className="text-sm font-black text-rose-300 block">حسابك موقوف مؤقتاً</strong>
               <p className="text-slate-300 leading-relaxed">
-                انتهت صلاحية اشتراكك السابق. جميع بياناتك وأفواجك وتلاميذك محفوظة بأمان تام وفق سياسة الحفظ. يرجى تجديد الاشتراك عبر بريدي موب وإرسال الوصل لإعادة التفعيل.
+                حسابك موقوف مؤقتاً بقرار الإدارة. يرجى التواصل مع الإدارة لمزيد من التفاصيل.
               </p>
             </div>
           </div>

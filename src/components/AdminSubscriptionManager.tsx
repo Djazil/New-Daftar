@@ -8,7 +8,7 @@ import { AuthUser, SubscriptionPlanId, TeacherSubscription } from '../types';
 import {
   ADMIN_EMAIL, SUBSCRIPTION_TIERS, loadAllSubscriptions,
   activateTeacherSubscription, fetchSubscriptionsFromServer,
-  deleteTeacherAccount
+  deleteTeacherAccount, getDeletedEmails
 } from '../services/subscriptionService';
 import { subscribeToAllSubscriptionsInFirestore } from '../services/firebaseSubscriptionService';
 
@@ -47,10 +47,18 @@ export default function AdminSubscriptionManager({
       }
     });
 
-    // اشتراك مباشر مع Firestore
+    // اشتراك مباشر مع Firestore مع إلغاء الحسابات المحذوفة فوراً
     const unsub = subscribeToAllSubscriptionsInFirestore((firestoreMap) => {
-      if (isMounted && firestoreMap && Object.keys(firestoreMap).length > 0) {
-        setSubscriptions(prev => ({ ...prev, ...firestoreMap }));
+      if (isMounted && firestoreMap) {
+        const deleted = getDeletedEmails();
+        const filtered: Record<string, TeacherSubscription> = {};
+        Object.keys(firestoreMap).forEach(key => {
+          const clean = key.toLowerCase();
+          if (!deleted.includes(clean) || clean === ADMIN_EMAIL.toLowerCase()) {
+            filtered[clean] = firestoreMap[key];
+          }
+        });
+        setSubscriptions(filtered);
       }
     });
 
@@ -75,7 +83,7 @@ export default function AdminSubscriptionManager({
 
   // تفعيل الاشتراك
   const handleActivate = async (teacherEmail: string, planId: SubscriptionPlanId) => {
-    const res = await activateTeacherSubscription(currentUser.email, teacherEmail, planId);
+    const res = await activateTeacherSubscription(currentUser.email, teacherEmail, { adminNotes: 'تم تفعيل الحساب مدى الحياة من طرف المشرف' });
     if (res.success) {
       showToast(res.message, 'success');
       setSelectedSubForEdit(null);
@@ -85,12 +93,18 @@ export default function AdminSubscriptionManager({
     }
   };
 
-  // حذف / رفض الحساب نهائياً
+  // حذف / رفض الحساب نهائياً وإزالته فوراً من القائمة
   const handleConfirmDelete = async () => {
     if (!subToDelete) return;
-    const res = await deleteTeacherAccount(currentUser.email, subToDelete.teacherEmail);
+    const targetEmail = subToDelete.teacherEmail.trim().toLowerCase();
+    const res = await deleteTeacherAccount(currentUser.email, targetEmail);
     if (res.success) {
       showToast(res.message, 'success');
+      setSubscriptions(prev => {
+        const copy = { ...prev };
+        delete copy[targetEmail];
+        return copy;
+      });
       setSubToDelete(null);
       await reloadData();
     } else {

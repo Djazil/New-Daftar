@@ -14,13 +14,15 @@ service cloud.firestore {
     }
 
     // ==========================================
-    // 1. إدارة الاشتراكات وتسجيلات الأساتذة
+    // 1. إدارة الحسابات والاشتراكات
     // ==========================================
     match /subscriptions/{subId} {
-      // القراءة متاحة للجميع للتحقق من حالة الحساب والمزامنة الحية في لوحة المدير
       allow read: if true;
+      allow write: if true;
+    }
 
-      // إنشاء طلب تسجيل جديد أو التعديل متاح للأساتذة وللمدير
+    match /deleted_subscriptions/{subId} {
+      allow read: if true;
       allow write: if true;
     }
 

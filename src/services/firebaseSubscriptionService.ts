@@ -116,7 +116,7 @@ export async function fetchSubscriptionsFromFirestore(): Promise<Record<string, 
 }
 
 /**
- * حذف حساب أستاذ نهائياً من Firestore
+ * حذف حساب أستاذ نهائياً من Firestore مع إضافته للقائمة السوداء للمحذوفات
  */
 export async function deleteSubscriptionFromFirestore(teacherEmail: string): Promise<boolean> {
   const cleanEmail = teacherEmail.trim().toLowerCase();
@@ -124,10 +124,55 @@ export async function deleteSubscriptionFromFirestore(teacherEmail: string): Pro
   const path = `subscriptions/${docKey}`;
 
   try {
+    // 1. مسح مستند الاشتراك
     await deleteDoc(doc(db, 'subscriptions', docKey));
+    
+    // 2. إضافة إلى قائمة المحذوفات في Firestore
+    await setDoc(doc(db, 'deleted_subscriptions', docKey), {
+      teacherEmail: cleanEmail,
+      deletedAt: new Date().toISOString(),
+      deletedBy: 'djazild@gmail.com'
+    });
+
     return true;
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
+    return false;
+  }
+}
+
+/**
+ * جلب قائمة البريد الممنوع/المحذوف نهائياً من Firestore
+ */
+export async function fetchDeletedSubscriptionsFromFirestore(): Promise<string[]> {
+  const path = 'deleted_subscriptions';
+  try {
+    const snapshot = await getDocs(collection(db, path));
+    const list: string[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data && data.teacherEmail) {
+        list.push(data.teacherEmail.trim().toLowerCase());
+      }
+    });
+    return list;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+    return [];
+  }
+}
+
+/**
+ * إزالة البريد من القائمة السوداء للمحذوفات (عند استعادة الحساب)
+ */
+export async function removeDeletedSubscriptionFromFirestore(teacherEmail: string): Promise<boolean> {
+  const cleanEmail = teacherEmail.trim().toLowerCase();
+  const docKey = emailToDocKey(cleanEmail);
+  try {
+    await deleteDoc(doc(db, 'deleted_subscriptions', docKey));
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `deleted_subscriptions/${docKey}`);
     return false;
   }
 }

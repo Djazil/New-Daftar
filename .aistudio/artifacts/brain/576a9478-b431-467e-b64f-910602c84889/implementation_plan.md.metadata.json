@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for redesigning the registration interface, simplifying the admin panel exclusively for djazild@gmail.com, adding a dedicated parent portal tab without login, removing scenario/test features, and enforcing direct real-time Firebase Firestore database persistence.",
-  "updatedAt": "2026-10-16T19:09:24.124606278Z",
+  "summary": "خطة عمل هندسية شاملة لإعادة هيكلة منصة الدفتر اليومي الذكي للأستاذ مع معالجة كافة الأخطاء البرمجية في التسجيل، المزامنة الحية مع Firestore، لوحة الإدارة، الحذف النهائيات الحقيقية، وإيقاف انتهاء الاشتراكات الزمنية لجعل الاشتراك مدى الحياة حصراً.",
+  "updatedAt": "2026-10-16T23:49:31.175957231Z",
   "requestFeedback": true,
   "userFacing": true
 }

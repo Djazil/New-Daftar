@@ -134,8 +134,8 @@ export interface UploadedPDFDoc {
 // نظام اشتراكات الأساتذة والتراخيص
 // ==========================================
 
-export type SubscriptionPlanId = '1month' | '6months' | '1year' | 'lifetime';
-export type SubscriptionStatus = 'none' | 'pending' | 'active' | 'expired' | 'suspended';
+export type SubscriptionPlanId = 'lifetime' | '1year' | '6months' | '1month' | 'none';
+export type SubscriptionStatus = 'none' | 'pending' | 'active' | 'suspended' | 'deleted';
 
 export interface SubscriptionTier {
   id: SubscriptionPlanId;

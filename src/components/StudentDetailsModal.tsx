@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   X, User, HeartHandshake, Award, AlertTriangle, Clock,
   CheckCircle2, Printer, Copy, Save, Edit3, ShieldCheck,
-  TrendingUp, BookOpen, MessageSquare, Sparkles, Check
+  TrendingUp, BookOpen, MessageSquare, Sparkles, Check, Trash2
 } from 'lucide-react';
 import { Student, ClassGroup } from '../types';
 
@@ -12,6 +12,7 @@ interface StudentDetailsModalProps {
   onClose: () => void;
   onSaveStudent: (updatedStudent: Student) => void;
   calcAverage: (student: Student, hasTP: boolean) => number;
+  onDeleteStudent?: (studentId: string) => void;
 }
 
 export default function StudentDetailsModal({
@@ -19,11 +20,13 @@ export default function StudentDetailsModal({
   classInfo,
   onClose,
   onSaveStudent,
-  calcAverage
+  calcAverage,
+  onDeleteStudent
 }: StudentDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'coordination' | 'grades'>('overview');
   const [isCopied, setIsCopied] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Form states for coordination and notes
   const [coordinationStatus, setCoordinationStatus] = useState(student.coordinationStatus || 'good');
@@ -413,11 +416,11 @@ export default function StudentDetailsModal({
 
         {/* أزرار الإجراءات السفلية */}
         <div className="bg-slate-50 p-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleCopyReport}
-              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition flex items-center gap-1.5"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition flex items-center gap-1.5 cursor-pointer"
             >
               {isCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-500" />}
               <span>{isCopied ? 'تم نسخ التقرير!' : 'نسخ تقرير الولي'}</span>
@@ -425,31 +428,84 @@ export default function StudentDetailsModal({
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition flex items-center gap-1.5"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition flex items-center gap-1.5 cursor-pointer"
             >
               <Printer className="w-4 h-4 text-slate-500" />
               <span>طباعة الاستمارة</span>
             </button>
+            {onDeleteStudent && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="حذف هذا التلميذ نهائياً من القسم"
+              >
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>حذف التلميذ</span>
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 text-xs font-bold hover:bg-slate-100 transition"
+              className="px-4 py-2 rounded-xl border border-slate-300 text-slate-600 text-xs font-bold hover:bg-slate-100 transition cursor-pointer"
             >
               إغلاق
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-sm transition flex items-center gap-1.5"
+              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-sm transition flex items-center gap-1.5 cursor-pointer"
             >
               {isSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
               <span>{isSaved ? 'تم حفظ التعديلات بنجاح ✓' : 'حفظ التعديلات والتوصيات'}</span>
             </button>
           </div>
         </div>
+
+        {/* نافذة تأكيد حذف التلميذ المباشرة والآمنة بدون window.confirm */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-rose-200 text-center space-y-4 animate-scaleUp">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="font-black text-slate-900 text-base">تأكيد حذف التلميذ</h4>
+                <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                  هل أنت متأكد من حذف التلميذ <strong className="text-rose-700 font-bold">{student.lastName} {student.firstName}</strong> نهائياً من قسم <span className="font-bold text-slate-700">{classInfo.name}</span>؟
+                </p>
+                <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                  ⚠️ سيتم حذف التلميذ مع كافة نقاطه وملاحظاته وغياباته.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onDeleteStudent) {
+                      onDeleteStudent(student.id);
+                    }
+                    setShowDeleteConfirm(false);
+                    onClose();
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs transition cursor-pointer shadow-sm"
+                >
+                  نعم، تأكيد الحذف
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

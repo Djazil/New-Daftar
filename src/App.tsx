@@ -39,6 +39,7 @@ import {
   activateTeacherSubscription, fetchSubscriptionsFromServer,
   registerOrUpdateGoogleUser
 } from './services/subscriptionService';
+import { matchesStudentQuery, HighlightMatch, normalizeArabic } from './utils/searchUtils';
 
 
 // ==========================================
@@ -524,9 +525,14 @@ export default function App() {
   const [globalStudentSearch, setGlobalStudentSearch] = useState('');
   const [isGlobalSearchActive, setIsGlobalSearchActive] = useState(false);
   const [classListSearch, setClassListSearch] = useState('');
+  const [gradingSearch, setGradingSearch] = useState('');
   const [classListGroupFilter, setClassListGroupFilter] = useState<'all' | 1 | 2>('all');
   const [classListCoordinationFilter, setClassListCoordinationFilter] = useState<'all' | 'urgent' | 'followup' | 'good'>('all');
   const [classListSubTab, setClassListSubTab] = useState<'list' | 'coordination'>('list');
+  const [isBatchDeleteMode, setIsBatchDeleteMode] = useState(false);
+  const [selectedStudentIdsForDelete, setSelectedStudentIdsForDelete] = useState<string[]>([]);
+  const [studentToDeleteModal, setStudentToDeleteModal] = useState<{ student: Student; classInfo: ClassGroup } | null>(null);
+  const [showBatchDeleteConfirmModal, setShowBatchDeleteConfirmModal] = useState(false);
   const [coordinationStudent, setCoordinationStudent] = useState<Student | null>(null);
   const [coordinationTargetClassId, setCoordinationTargetClassId] = useState<string | null>(null);
   const [coordinationForm, setCoordinationForm] = useState({
@@ -1014,25 +1020,38 @@ export default function App() {
 
   const filteredStudents = useMemo(() => {
     return activeClass.students.filter(s => {
-      const matchesGroup = groupFilter === 'all' || s.group === groupFilter;
-      const fullName = `${s.lastName} ${s.firstName}`;
-      const matchesSearch = fullName.includes(searchQuery.trim());
+      const hasSearch = Boolean(searchQuery.trim());
+      const matchesGroup = groupFilter === 'all' || hasSearch || s.group === groupFilter;
+      const matchesSearch = matchesStudentQuery(s, searchQuery);
       return matchesGroup && matchesSearch;
     });
   }, [activeClass, groupFilter, searchQuery]);
 
+  // قائمة التلاميذ المطابقين لحرف البحث في وضع الحصة المباشرة
+  const inClassMatchingStudents = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return activeClass.students.filter(s => matchesStudentQuery(s, searchQuery));
+  }, [activeClass.students, searchQuery]);
+
+  // قائمة التلاميذ المفلترة في مصفوفة التنقيط والرقمنة لحجز النقاط السريع
+  const filteredGradingStudents = useMemo(() => {
+    if (!gradingSearch.trim()) return activeClass.students;
+    return activeClass.students.filter(st => matchesStudentQuery(st, gradingSearch));
+  }, [activeClass.students, gradingSearch]);
+
   // [تعديل 1: تلاميذ القسم المفلترون في جدول الإحصائيات مع إمكانية الترتيب]
   const analyticsStudentsList = useMemo(() => {
+    const hasSearch = Boolean(analyticsSearchQuery.trim());
     const filtered = activeClass.students.filter(s => {
       const avg = calcStudentAverage(s, activeClass.hasTP);
       let matchFilter = true;
-      if (analyticsFilterGroup === 1) matchFilter = s.group === 1;
-      if (analyticsFilterGroup === 2) matchFilter = s.group === 2;
-      if (analyticsFilterGroup === 'remedial') matchFilter = avg < 10;
-      if (analyticsFilterGroup === 'absentWarning') matchFilter = s.absencesCount >= 3;
-
-      const fullName = `${s.lastName} ${s.firstName}`;
-      const matchSearch = fullName.includes(analyticsSearchQuery.trim());
+      if (!hasSearch) {
+        if (analyticsFilterGroup === 1) matchFilter = s.group === 1;
+        if (analyticsFilterGroup === 2) matchFilter = s.group === 2;
+        if (analyticsFilterGroup === 'remedial') matchFilter = avg < 10;
+        if (analyticsFilterGroup === 'absentWarning') matchFilter = s.absencesCount >= 3;
+      }
+      const matchSearch = matchesStudentQuery(s, analyticsSearchQuery);
       return matchFilter && matchSearch;
     });
 
@@ -1069,6 +1088,26 @@ export default function App() {
     );
   };
 
+  const deleteStudent = (studentId: string, studentName?: string, targetClassId?: string) => {
+    setClasses(prev =>
+      prev.map(cls => {
+        const isTarget = targetClassId ? cls.id === targetClassId : (cls.id === activeClass.id || cls.students.some(s => s.id === studentId));
+        if (!isTarget) return cls;
+        return {
+          ...cls,
+          students: cls.students.filter(st => st.id !== studentId)
+        };
+      })
+    );
+    if (selectedStudentId === studentId) {
+      setSelectedStudentId(null);
+    }
+    if (selectedStudentForDetails?.student.id === studentId) {
+      setSelectedStudentForDetails(null);
+    }
+    showNotice(`✓ تم حذف التلميذ ${studentName || ''} بنجاح من القسم`);
+  };
+
   // قائمة جميع التلاميذ في المنصة للبحث المباشر
   const allPlatformStudents = useMemo(() => {
     return classes.flatMap(cls =>
@@ -1082,36 +1121,26 @@ export default function App() {
     );
   }, [classes]);
 
-  // نتائج البحث المباشر في المنصة عبر كل الأقسام
+  // نتائج البحث المباشر في المنصة عبر كل الأقسام (تظهر كل الأسماء بمجرد كتابة حرف واحد)
   const globalSearchResults = useMemo(() => {
-    const q = globalStudentSearch.trim().toLowerCase();
-    if (!q) return [];
-    return allPlatformStudents.filter(st => {
-      const full = `${st.firstName} ${st.lastName}`.toLowerCase();
-      const rev = `${st.lastName} ${st.firstName}`.toLowerCase();
-      const code = (st.parentCode || '').toLowerCase();
-      const parentName = (st.parentName || '').toLowerCase();
-      const clsName = st.className.toLowerCase();
-      return full.includes(q) || rev.includes(q) || code.includes(q) || parentName.includes(q) || clsName.includes(q);
-    }).slice(0, 8);
+    if (!globalStudentSearch || !globalStudentSearch.trim()) return [];
+    return allPlatformStudents.filter(st => matchesStudentQuery(st, globalStudentSearch));
   }, [allPlatformStudents, globalStudentSearch]);
 
-  // قائمة التلاميذ المفلترة في إدارة القوائم
+  // قائمة التلاميذ المفلترة في إدارة القوائم (تظهر كل الأسماء المطابقة للحرف فوراً)
   const filteredClassListStudents = useMemo(() => {
+    const hasSearch = Boolean(classListSearch.trim());
     return activeClass.students.filter(st => {
-      if (classListGroupFilter !== 'all' && st.group !== classListGroupFilter) return false;
-      if (classListCoordinationFilter !== 'all') {
-        if (classListCoordinationFilter === 'urgent' && st.coordinationStatus !== 'urgent') return false;
-        if (classListCoordinationFilter === 'followup' && st.coordinationStatus !== 'followup') return false;
-        if (classListCoordinationFilter === 'good' && (st.coordinationStatus && st.coordinationStatus !== 'good')) return false;
+      if (!hasSearch) {
+        if (classListGroupFilter !== 'all' && st.group !== classListGroupFilter) return false;
+        if (classListCoordinationFilter !== 'all') {
+          if (classListCoordinationFilter === 'urgent' && st.coordinationStatus !== 'urgent') return false;
+          if (classListCoordinationFilter === 'followup' && st.coordinationStatus !== 'followup') return false;
+          if (classListCoordinationFilter === 'good' && (st.coordinationStatus && st.coordinationStatus !== 'good')) return false;
+        }
       }
-      if (classListSearch.trim()) {
-        const q = classListSearch.trim().toLowerCase();
-        const full = `${st.firstName} ${st.lastName}`.toLowerCase();
-        const rev = `${st.lastName} ${st.firstName}`.toLowerCase();
-        const code = (st.parentCode || '').toLowerCase();
-        const parentName = (st.parentName || '').toLowerCase();
-        if (!full.includes(q) && !rev.includes(q) && !code.includes(q) && !parentName.includes(q)) return false;
+      if (hasSearch) {
+        if (!matchesStudentQuery(st, classListSearch)) return false;
       }
       return true;
     });
@@ -1273,7 +1302,10 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
 
   const handleSeatClick = (seatIndex: number, currentStudent?: Student) => {
     if (!isEditingSeating) {
-      if (currentStudent) setSelectedStudentId(currentStudent.id);
+      if (currentStudent) {
+        setSelectedStudentId(currentStudent.id);
+        setSelectedStudentForDetails({ student: currentStudent, classInfo: activeClass });
+      }
       return;
     }
 
@@ -1876,14 +1908,14 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="بحث عن تلميذ..."
+                  placeholder="بحث فوري عن تلميذ بحرف أو اسم..."
                   value={globalStudentSearch}
                   onChange={e => {
                     setGlobalStudentSearch(e.target.value);
                     setIsGlobalSearchActive(true);
                   }}
                   onFocus={() => setIsGlobalSearchActive(true)}
-                  className="w-full pr-7 pl-6 py-1.5 text-xs bg-slate-100 hover:bg-slate-200/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl border border-slate-300 transition"
+                  className="w-full pr-8 pl-7 py-1.5 text-xs bg-slate-100 hover:bg-slate-200/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl border border-slate-300 transition"
                 />
                 {globalStudentSearch && (
                   <button
@@ -1898,75 +1930,107 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 )}
               </div>
 
-              {/* القائمة المنبثقة لنتائج البحث المباشر في المنصة */}
+              {/* القائمة المنبثقة لنتائج البحث المباشر في المنصة (تعرض جميع الأسماء المطابقة للحرف فوراً) */}
               {isGlobalSearchActive && globalStudentSearch.trim() && (
-                <div className="absolute top-full mt-1.5 right-0 w-72 sm:w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden text-right">
-                  <div className="p-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-700 flex items-center gap-1.5">
-                      <Search className="w-3.5 h-3.5 text-blue-600" />
-                      نتائج البحث ({globalSearchResults.length})
-                    </span>
+                <div className="absolute top-full mt-1.5 right-0 w-80 sm:w-96 md:w-[440px] bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden text-right animate-scaleUp">
+                  <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-200 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-black text-slate-800 flex items-center gap-1.5">
+                        <Search className="w-3.5 h-3.5 text-blue-600" />
+                        <span>نتائج البحث عن:</span>
+                        <span className="bg-blue-600 text-white px-2 py-0.5 rounded-full font-mono text-[11px]">
+                          «{globalStudentSearch}»
+                        </span>
+                        <span className="text-blue-700 font-bold">({globalSearchResults.length} تلميذ)</span>
+                      </span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        يتم عرض جميع الأسماء التي تحتوي على هذا الحرف في أي موضع من الاسم
+                      </span>
+                    </div>
                     <button
+                      type="button"
                       onClick={() => setIsGlobalSearchActive(false)}
-                      className="text-slate-400 hover:text-slate-600 text-xs px-1.5 py-0.5 rounded hover:bg-slate-200"
+                      className="text-slate-400 hover:text-slate-700 text-xs px-2 py-1 rounded-lg hover:bg-slate-200 transition cursor-pointer"
                     >
                       إغلاق ✕
                     </button>
                   </div>
 
-                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                  <div className="max-h-[65vh] overflow-y-auto divide-y divide-slate-100 touch-scroll">
                     {globalSearchResults.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-slate-500">
-                        لا يوجد تلميذ يطابق "{globalStudentSearch}" في أي قسم
+                      <div className="p-6 text-center text-xs text-slate-500 space-y-1">
+                        <p className="font-bold text-slate-700">لم يتم العثور على أي تلميذ يتضمن اسمه "{globalStudentSearch}"</p>
+                        <p className="text-[11px] text-slate-400">تأكد من الحرف المدخل أو جرب البحث بجزء آخر من الاسم</p>
                       </div>
                     ) : (
                       globalSearchResults.map(st => {
                         const avg = calcStudentAverage(st, st.hasTP);
+                        const targetCls = classes.find(c => c.id === st.classId) || activeClass;
                         return (
-                          <div key={`${st.classId}-${st.id}`} className="p-3 hover:bg-blue-50/50 transition flex flex-col gap-2">
+                          <div
+                            key={`${st.classId}-${st.id}`}
+                            onClick={() => {
+                              setSelectedStudentForDetails({ student: st, classInfo: targetCls });
+                              setIsGlobalSearchActive(false);
+                            }}
+                            className="p-3 hover:bg-blue-50/70 transition flex flex-col gap-2 cursor-pointer group"
+                          >
                             <div className="flex items-center justify-between">
-                              <div>
-                                <span className="font-bold text-slate-800 text-xs">
-                                  {st.lastName} {st.firstName}
+                              <div className="min-w-0">
+                                <span className="font-black text-slate-900 text-sm group-hover:text-blue-700 transition flex items-center gap-1.5">
+                                  <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={globalStudentSearch} />
                                 </span>
-                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                                  <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold text-[10px]">
+                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap">
+                                  <span className="bg-slate-100 group-hover:bg-blue-100 text-slate-700 group-hover:text-blue-800 px-2 py-0.5 rounded-lg font-bold text-[10px]">
                                     {st.className}
                                   </span>
                                   <span className="font-mono text-blue-600 font-bold text-[10px]">
-                                    {st.parentCode}
+                                    كود: <HighlightMatch text={st.parentCode} query={globalStudentSearch} />
                                   </span>
                                   {st.coordinationStatus === 'urgent' && (
-                                    <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1 rounded">
-                                      ⚠️ عاجل
+                                    <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.2 rounded">
+                                      ⚠️ استدعاء الولي
                                     </span>
                                   )}
                                 </div>
                               </div>
-                              <div className="text-left font-mono">
-                                <span className={`text-xs font-bold ${avg >= 10 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                  {avg} <span className="text-[10px] font-sans text-slate-400">/20</span>
+                              <div className="text-left font-mono shrink-0">
+                                <span className={`text-xs font-black px-2 py-1 rounded-lg ${avg >= 10 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                  {avg} <span className="text-[9px] font-sans text-slate-500">/20</span>
                                 </span>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                            <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100" onClick={e => e.stopPropagation()}>
                               <button
-                                onClick={() => openCoordinationModal(st, st.classId)}
-                                className="flex-1 py-1 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition shadow-xs"
+                                type="button"
+                                onClick={() => {
+                                  setSelectedStudentForDetails({ student: st, classInfo: targetCls });
+                                  setIsGlobalSearchActive(false);
+                                }}
+                                className="py-1 px-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] flex items-center gap-1 transition shadow-xs cursor-pointer"
                               >
-                                <HeartHandshake className="w-3.5 h-3.5" />
-                                <span>🤝 التنسيق مع الولي</span>
+                                <Eye className="w-3 h-3" />
+                                <span>معاينة البطاقة</span>
                               </button>
                               <button
+                                type="button"
+                                onClick={() => openCoordinationModal(st, st.classId)}
+                                className="py-1 px-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                              >
+                                <HeartHandshake className="w-3 h-3" />
+                                <span>التنسيق</span>
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setActiveClassId(st.classId);
                                   setActiveTab('classes');
                                   setIsGlobalSearchActive(false);
                                 }}
-                                className="py-1 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition"
+                                className="py-1 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
                               >
-                                عرض بالقائمة
+                                فتح في {st.className}
                               </button>
                             </div>
                           </div>
@@ -2963,17 +3027,75 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   )}
                 </div>
 
-                <div className="relative w-full sm:w-56">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3" />
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="ابحث عن تلميذ..."
+                    placeholder="ابحث بحرف أو اسم (مثال: م)..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pr-8 pl-3 py-1.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-blue-500"
+                    className="w-full pr-8 pl-8 py-1.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                   />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute left-2.5 top-2 text-slate-400 hover:text-slate-600 transition"
+                      title="مسح البحث"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {/* شريط الإشعار بنتائج البحث السريع بالحرف مع أزرار الانتقال الفوري للتلاميذ */}
+              {searchQuery.trim() && (
+                <div className="p-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-300 rounded-2xl flex flex-wrap items-center justify-between gap-2.5 shadow-xs text-xs animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-amber-400 text-amber-950 font-black flex items-center justify-center shrink-0 shadow-xs">
+                      <Search className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <span className="font-black text-amber-950">
+                        نتائج البحث بالحرف «{searchQuery}»:
+                      </span>{' '}
+                      <span className="font-bold text-amber-800">
+                        ({inClassMatchingStudents.length} تلميذ يتضمن اسمهم هذا الحرف)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {inClassMatchingStudents.map(st => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentId(st.id);
+                          setSelectedStudentForDetails({ student: st, classInfo: activeClass });
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs ${
+                          selectedStudent?.id === st.id
+                            ? 'bg-amber-500 text-slate-900 ring-2 ring-amber-600'
+                            : 'bg-white border border-amber-300 text-amber-950 hover:bg-amber-100'
+                        }`}
+                      >
+                        <span>{st.lastName} {st.firstName}</span>
+                        <span className="text-[10px] bg-amber-100 text-amber-900 px-1 py-0.2 rounded font-mono font-bold">
+                          طاولة #{st.seatIndex + 1}
+                        </span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="px-2 py-1 text-slate-500 hover:text-slate-800 font-bold hover:underline cursor-pointer"
+                    >
+                      إلغاء ✕
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* شبكة الطاولات الديناميكية */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2995,6 +3117,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                         const st = activeClass.students.find(s => s.seatIndex === seatIdx);
                         const isSelected = selectedStudent?.id === st?.id;
                         const isBeingSwapped = selectedSeatIndexToSwap === seatIdx;
+                        const hasActiveSearch = Boolean(searchQuery.trim());
 
                         if (!st) {
                           return (
@@ -3006,6 +3129,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                                   ? 'bg-amber-100 border-amber-500'
                                   : isEditingSeating
                                   ? 'border-blue-300 bg-blue-50/30 hover:bg-blue-50'
+                                  : hasActiveSearch
+                                  ? 'border-slate-200 bg-slate-50/20 text-slate-300 opacity-25'
                                   : 'border-slate-200 bg-slate-50/40 text-slate-400'
                               }`}
                             >
@@ -3017,9 +3142,14 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                           );
                         }
 
+                        const isMatchSearch = Boolean(hasActiveSearch && matchesStudentQuery(st, searchQuery));
                         const statusColor =
                           isBeingSwapped
                             ? 'border-amber-500 bg-amber-100 ring-2 ring-amber-400'
+                            : isMatchSearch
+                            ? 'border-amber-500 bg-amber-100/90 ring-4 ring-amber-400 shadow-xl scale-[1.03] z-10'
+                            : hasActiveSearch
+                            ? 'border-slate-200 bg-slate-50/30 opacity-30 grayscale-[0.6] hover:opacity-100 hover:grayscale-0'
                             : st.attendance === 'absent'
                             ? 'border-rose-300 bg-rose-50/70'
                             : st.attendance === 'late'
@@ -3036,8 +3166,13 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                           >
                             <div className="flex items-start justify-between gap-1">
                               <div>
+                                {isMatchSearch && (
+                                  <span className="inline-block px-1.5 py-0.2 rounded bg-amber-400 text-amber-950 font-black text-[10px] mb-1 shadow-xs">
+                                    ⭐ متطابق مع «{searchQuery}»
+                                  </span>
+                                )}
                                 <div className="font-bold text-slate-800 text-sm leading-snug">
-                                  {st.lastName} {st.firstName}
+                                  <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={searchQuery} />
                                 </div>
                                 <div className="text-[11px] text-slate-500 flex items-center gap-1">
                                   <span>فوج {st.group}</span>
@@ -3096,10 +3231,28 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {filteredStudents.map(st => (
+                      {filteredStudents.length === 0 ? (
+                        <div className="py-12 px-4 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2.5">
+                          <Search className="w-8 h-8 text-slate-300 mx-auto" />
+                          <p className="font-bold text-slate-700 text-sm">
+                            لم يتم العثور على أي تلميذ يتضمن اسمه حرف «{searchQuery}»
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                          >
+                            مسح البحث وعرض كل القسم
+                          </button>
+                        </div>
+                      ) : (
+                        filteredStudents.map(st => (
                         <div
                           key={st.id}
-                          onClick={() => setSelectedStudentId(st.id)}
+                          onClick={() => {
+                            setSelectedStudentId(st.id);
+                            setSelectedStudentForDetails({ student: st, classInfo: activeClass });
+                          }}
                           className={`p-3 rounded-xl border transition flex flex-wrap items-center justify-between gap-3 cursor-pointer ${
                             selectedStudent?.id === st.id ? 'bg-blue-50/70 border-blue-400' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-100'
                           }`}
@@ -3109,7 +3262,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                               ف{st.group}
                             </span>
                             <div>
-                              <div className="font-bold text-sm text-slate-800">{st.lastName} {st.firstName}</div>
+                              <div className="font-bold text-sm text-slate-800">
+                                <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={searchQuery} />
+                              </div>
                               <div className="text-xs text-slate-500">
                                 التقويم: {calcContinuousScore(st.bonusPoints)} / 20 | الرصيد: {st.bonusPoints} | المقعد: #{st.seatIndex + 1}
                               </div>
@@ -3148,8 +3303,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                             </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      ))
+                    )}
+                  </div>
                   )}
                 </div>
 
@@ -3292,18 +3448,42 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     <span className="text-xs text-slate-400 mt-1">يدعم JPG و PNG</span>
                     <input
                       type="file" accept="image/*"
-                      onChange={e => {
+                      onChange={async e => {
                         const file = e.target.files?.[0];
                         if (!file) return;
                         setIsScanning(true);
-                        setTimeout(() => {
-                          setScannedPreview([
-                            { lastName: 'بوجمعة', firstName: 'عبد الرحمن', birthDate: '2008-02-11', group: 1 },
-                            { lastName: 'خليفي', firstName: 'آية', birthDate: '2008-09-25', group: 1 }
-                          ]);
-                          setIsScanning(false);
-                          showNotice('تم التعرف على الأسماء بنجاح!');
-                        }, 1200);
+
+                        const reader = new FileReader();
+                        reader.onload = async (ev) => {
+                          const base64 = ev.target?.result as string;
+                          try {
+                            const res = await fetch('/api/ocr/extract-students', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ imageBase64: base64, mimeType: file.type })
+                            });
+                            const data = await res.json();
+                            if (data.success && Array.isArray(data.students) && data.students.length > 0) {
+                              const formatted = data.students.map((st: any, idx: number) => ({
+                                lastName: (st.lastName || '').trim() || 'غير محدد',
+                                firstName: (st.firstName || '').trim() || 'تلميذ',
+                                birthDate: '2008-05-01',
+                                group: (idx % 2 === 0 ? 1 : 2) as 1 | 2
+                              }));
+                              setScannedPreview(formatted);
+                              showNotice(`✓ تم استخراج ${formatted.length} تلميذ حقيقي بنجاح من ورقة القائمة!`);
+                            } else {
+                              throw new Error(data.message || 'لم يتم العثور على أسماء واضحة في الصورة');
+                            }
+                          } catch (err: any) {
+                            console.error('OCR Extraction error:', err);
+                            setScannedPreview([]);
+                            showNotice(`⚠️ ${err.message || 'تعذر قراءة أسماء القائمة من الصورة. يرجى التأكد من وضوح تصوير القائمة وإعادة المحاولة.'}`);
+                          } finally {
+                            setIsScanning(false);
+                          }
+                        };
+                        reader.readAsDataURL(file);
                       }}
                       className="hidden"
                     />
@@ -3464,13 +3644,13 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 {/* شريط البحث المباشر في القائمة والتصفية السريعة */}
                 <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <div className="relative flex-1 min-w-[200px]">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
-                      placeholder="ابحث عن اسم التلميذ، اللقب، أو كود الولي..."
+                      placeholder="ابحث بحرف أو اسم أو كود (مثال: ع، ب، فاطمة)..."
                       value={classListSearch}
                       onChange={e => setClassListSearch(e.target.value)}
-                      className="w-full pr-8 pl-7 py-1.5 text-xs bg-white rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                      className="w-full pr-8 pl-8 py-1.5 text-xs bg-white rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                     />
                     {classListSearch && (
                       <button
@@ -3511,15 +3691,81 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                       <Printer className="w-3.5 h-3.5 text-slate-500" />
                       <span className="hidden sm:inline">طباعة</span>
                     </button>
+
+                    <button
+                      onClick={() => {
+                        setIsBatchDeleteMode(!isBatchDeleteMode);
+                        setSelectedStudentIdsForDelete([]);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border ${
+                        isBatchDeleteMode
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+                          : 'bg-white hover:bg-rose-50 text-rose-600 border-rose-300'
+                      }`}
+                      title="تحديد وحذف جماعي للتلاميذ"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isBatchDeleteMode ? 'إلغاء وضع الحذف' : '🗑️ حذف تلاميذ متعدد'}</span>
+                    </button>
                   </div>
                 </div>
 
+                {/* شريط الإجراءات الجماعية للحذف عند تفعيل وضع الحذف المتعدد */}
+                {isBatchDeleteMode && (
+                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs animate-fadeIn shadow-sm">
+                    <div className="flex items-center gap-2 font-bold text-rose-900">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>وضع الحذف المتعدد: تم تحديد <strong className="font-mono text-rose-700 text-sm">{selectedStudentIdsForDelete.length}</strong> تلميذ</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedStudentIdsForDelete.length === 0) {
+                            showNotice('لم تقم بتحديد أي تلميذ للحذف.');
+                            return;
+                          }
+                          setShowBatchDeleteConfirmModal(true);
+                        }}
+                        disabled={selectedStudentIdsForDelete.length === 0}
+                        className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black transition cursor-pointer shadow-xs"
+                      >
+                        حذف التلاميذ المحددين ({selectedStudentIdsForDelete.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStudentIdsForDelete(filteredClassListStudents.map(s => s.id))}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-rose-300 text-rose-700 font-bold hover:bg-rose-100 cursor-pointer"
+                      >
+                        تحديد الكل
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsBatchDeleteMode(false);
+                          setSelectedStudentIdsForDelete([]);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 font-bold hover:bg-slate-300 cursor-pointer"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* عدد النتائج المطابقة */}
                 <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-                  <span>
-                    عرض <strong className="text-slate-800">{filteredClassListStudents.length}</strong> من أصل {activeClass.students.length} تلميذ
-                    {classListSearch && <span> (مطابقة للبحث: "{classListSearch}")</span>}
-                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>
+                      عرض <strong className="text-slate-800">{filteredClassListStudents.length}</strong> من أصل {activeClass.students.length} تلميذ
+                    </span>
+                    {classListSearch.trim() && (
+                      <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-900 font-bold px-2.5 py-0.5 rounded-full text-[11px] shadow-xs">
+                        <Search className="w-3 h-3 text-blue-600" />
+                        تتضمن الحرف/الاسم: «{classListSearch}» ({filteredClassListStudents.length} تلميذ)
+                      </span>
+                    )}
+                  </div>
                   {activeClass.students.some(s => s.coordinationStatus === 'urgent') && (
                     <span className="text-rose-600 font-bold flex items-center gap-1">
                       <AlertTriangle className="w-3.5 h-3.5" />
@@ -3528,163 +3774,157 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   )}
                 </div>
 
-                {/* النمط 1: جدول القائمة المنظم مع إظهار بيانات التلميذ فوراً بالضغط على اسمه */}
+                {/* نمط بطاقات التلاميذ المتوافقة تماماً مع الهواتف المحمولة والشاشات */}
                 {classListSubTab === 'list' && (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                    <table className="w-full text-right text-xs">
-                      <thead>
-                        <tr className="bg-slate-100/90 text-slate-700 border-b border-slate-200 font-bold">
-                          <th className="py-3 px-3 w-12 text-center">#</th>
-                          <th className="py-3 px-3 min-w-[190px]">اللقب والاسم (اضغط لعرض البيانات والتنسيق)</th>
-                          <th className="py-3 px-3 text-center">المقعد</th>
-                          <th className="py-3 px-3 text-center">الفوج</th>
-                          <th className="py-3 px-3 text-center">كود الولي</th>
-                          <th className="py-3 px-3 text-center">المعدل التقديري</th>
-                          <th className="py-3 px-3 text-center">التنسيق مع الأولياء</th>
-                          <th className="py-3 px-3 text-center">إجراءات</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {filteredClassListStudents.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="py-8 text-center text-slate-400">
-                              لا يوجد تلاميذ مطابقين لمعايير البحث والتصفية.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredClassListStudents.map((st, idx) => {
-                            const isUrgent = st.coordinationStatus === 'urgent';
-                            const isFollowup = st.coordinationStatus === 'followup';
-                            const studentAvg = calcStudentAverage(st, activeClass.hasTP);
+                  <div className="space-y-3">
+                    {filteredClassListStudents.length === 0 ? (
+                      <div className="py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                        لا يوجد تلاميذ مطابقين لمعايير البحث والتصفية.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                        {filteredClassListStudents.map((st, idx) => {
+                          const isUrgent = st.coordinationStatus === 'urgent';
+                          const isFollowup = st.coordinationStatus === 'followup';
+                          const studentAvg = calcStudentAverage(st, activeClass.hasTP);
+                          const isSelectedForDelete = selectedStudentIdsForDelete.includes(st.id);
 
-                            return (
-                              <tr
-                                key={st.id}
-                                className="hover:bg-blue-50/60 transition group cursor-pointer"
-                                onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
-                              >
-                                <td className="py-3 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
-                                
-                                {/* خلية الاسم التفاعلية: عند الضغط تظهر البيانات كاملة */}
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center shrink-0 group-hover:bg-blue-600 group-hover:text-white transition shadow-xs">
-                                      {st.firstName[0]}
-                                    </div>
-                                    <div>
-                                      <div className="font-black text-slate-900 group-hover:text-blue-700 text-xs sm:text-sm flex items-center gap-1.5 transition">
-                                        <span>{st.lastName} {st.firstName}</span>
-                                        <span className={`w-2 h-2 rounded-full shrink-0 ${isUrgent ? 'bg-rose-500 animate-pulse' : isFollowup ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                                      </div>
-                                      <span className="text-[10px] text-blue-600 font-medium group-hover:underline">
-                                        انقر لعرض البيانات والتنسيق ↗
-                                      </span>
-                                    </div>
+                          return (
+                            <div
+                              key={st.id}
+                              onClick={() => {
+                                if (isBatchDeleteMode) {
+                                  setSelectedStudentIdsForDelete(prev =>
+                                    prev.includes(st.id) ? prev.filter(id => id !== st.id) : [...prev, st.id]
+                                  );
+                                } else {
+                                  setSelectedStudentForDetails({ student: st, classInfo: activeClass });
+                                }
+                              }}
+                              className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs bg-white hover:border-blue-400 hover:shadow-md space-y-3 relative ${
+                                isBatchDeleteMode && isSelectedForDelete
+                                  ? 'border-rose-500 bg-rose-50/50 ring-2 ring-rose-400'
+                                  : isUrgent
+                                  ? 'border-rose-300 bg-rose-50/20'
+                                  : isFollowup
+                                  ? 'border-amber-300 bg-amber-50/20'
+                                  : 'border-slate-200'
+                              }`}
+                            >
+                              {isBatchDeleteMode && (
+                                <div className="absolute top-3 left-3 z-10">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelectedForDelete}
+                                    onChange={() => {}}
+                                    className="w-4 h-4 text-rose-600 rounded border-slate-300 focus:ring-rose-500 cursor-pointer"
+                                  />
+                                </div>
+                              )}
+                              {/* رأس البطاقة: الاسم والرقم */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center shrink-0 shadow-xs">
+                                    {idx + 1}
                                   </div>
-                                </td>
+                                  <div className="min-w-0">
+                                    <h4 className="font-black text-slate-900 text-sm truncate flex items-center gap-1.5">
+                                      <span><HighlightMatch text={`${st.lastName} ${st.firstName}`} query={classListSearch} /></span>
+                                      <span className={`w-2 h-2 rounded-full shrink-0 ${isUrgent ? 'bg-rose-500 animate-pulse' : isFollowup ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                                    </h4>
+                                    <span className="text-[10px] text-slate-400 block font-mono">
+                                      طاولة #{st.seatIndex + 1}
+                                    </span>
+                                  </div>
+                                </div>
 
-                                <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
-                                  طاولة #{st.seatIndex + 1}
-                                </td>
+                                <div className="font-mono text-xs font-black shrink-0">
+                                  <span className={`px-2 py-1 rounded-lg ${
+                                    studentAvg >= 14 ? 'bg-emerald-100 text-emerald-800' : studentAvg >= 10 ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
+                                  }`}>
+                                    {studentAvg} / 20
+                                  </span>
+                                </div>
+                              </div>
 
-                                <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
+                              {/* معلومات الفوج وكود الولي */}
+                              <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
+                                <div onClick={e => e.stopPropagation()}>
+                                  <span className="text-[10px] text-slate-400 block mb-0.5">الفوج البيداغوجي:</span>
                                   <button
                                     onClick={() => updateStudent(st.id, s => ({ ...s, group: s.group === 1 ? 2 : 1 }))}
-                                    className={`px-2.5 py-1 rounded-lg font-bold text-xs transition ${
-                                      st.group === 1 ? 'bg-blue-50 hover:bg-blue-100 text-blue-700' : 'bg-purple-50 hover:bg-purple-100 text-purple-700'
+                                    className={`w-full py-1 rounded-lg font-bold text-xs transition ${
+                                      st.group === 1 ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
                                     }`}
-                                    title="انقر لتبديل الفوج"
                                   >
                                     فوج {st.group} ⇄
                                   </button>
-                                </td>
+                                </div>
 
-                                <td className="py-3 px-3 text-center font-mono font-black text-blue-700" onClick={e => e.stopPropagation()}>
+                                <div onClick={e => e.stopPropagation()}>
+                                  <span className="text-[10px] text-slate-400 block mb-0.5">كود المتابعة للولي:</span>
                                   <button
                                     onClick={() => {
                                       navigator.clipboard.writeText(st.parentCode);
                                       showNotice(`تم نسخ كود الولي (${st.parentCode})`);
                                     }}
-                                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-700 font-mono transition text-xs font-bold"
-                                    title="انقر لنسخ الكود"
+                                    className="w-full py-1 rounded-lg bg-slate-100 text-slate-800 hover:bg-blue-100 hover:text-blue-800 font-mono font-bold text-xs transition"
                                   >
-                                    {st.parentCode}
+                                    {st.parentCode} 📋
                                   </button>
-                                </td>
+                                </div>
+                              </div>
 
-                                <td className="py-3 px-3 text-center font-mono">
-                                  <span className={`font-black text-xs px-2 py-0.5 rounded-lg ${
-                                    studentAvg >= 14 ? 'bg-emerald-100 text-emerald-800' : studentAvg >= 10 ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
-                                  }`}>
-                                    {studentAvg} / 20
-                                  </span>
-                                </td>
+                              {/* شريط الإجراءات السفلي */}
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs" onClick={e => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
+                                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] inline-flex items-center gap-1 border transition ${
+                                    isUrgent
+                                      ? 'bg-rose-50 text-rose-700 border-rose-300'
+                                      : isFollowup
+                                      ? 'bg-amber-50 text-amber-700 border-amber-300'
+                                      : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  }`}
+                                >
+                                  <HeartHandshake className="w-3.5 h-3.5" />
+                                  <span>{isUrgent ? 'استدعاء الولي' : isFollowup ? 'متابعة منزلية' : 'تواصل منتظم'}</span>
+                                </button>
 
-                                {/* عمود التنسيق مع أولياء الأمور */}
-                                <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 transition"
+                                    title="عرض البطاقة"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingStudent(st)}
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 transition"
+                                    title="تعديل"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
-                                    className={`px-2.5 py-1 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border transition cursor-pointer shadow-xs ${
-                                      isUrgent
-                                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300'
-                                        : isFollowup
-                                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300'
-                                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
-                                    }`}
-                                    title="فتح بطاقة وبيانات التنسيق والتوصيات للولي"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setStudentToDeleteModal({ student: st, classInfo: activeClass });
+                                    }}
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-700 transition cursor-pointer"
+                                    title="حذف التلميذ"
                                   >
-                                    <HeartHandshake className="w-3.5 h-3.5 text-indigo-600" />
-                                    <span>
-                                      {isUrgent ? 'استدعاء الولي' : isFollowup ? 'متابعة منزلية' : 'تواصل منتظم'}
-                                    </span>
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
-                                </td>
-
-                                {/* إجراءات التلميذ */}
-                                <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
-                                  <div className="flex items-center justify-center gap-1">
-                                    <button
-                                      onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
-                                      className="text-indigo-600 hover:text-indigo-800 p-1.5 rounded-lg hover:bg-indigo-50 transition"
-                                      title="عرض البطاقة الشاملة"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingStudent(st)}
-                                      className="text-blue-600 hover:text-blue-800 p-1.5 rounded-lg hover:bg-blue-50 transition"
-                                      title="تعديل بيانات التلميذ"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (window.confirm(`هل أنت متأكد من حذف التلميذ ${st.lastName} ${st.firstName} من القائمة؟`)) {
-                                          setClasses(prev =>
-                                            prev.map(c =>
-                                              c.id === activeClass.id
-                                                ? { ...c, students: c.students.filter(x => x.id !== st.id) }
-                                                : c
-                                            )
-                                          );
-                                          showNotice('تم حذف التلميذ من القائمة');
-                                        }
-                                      }}
-                                      className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition"
-                                      title="حذف من القائمة"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-
-                    </table>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3895,6 +4135,41 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 </div>
               </div>
 
+              {/* شريط البحث الفوري داخل مصفوفة التنقيط */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="ابحث بحرف أو اسم لحجز نقاط التلميذ فوراً (مثال: ع، ب، فاطمة)..."
+                    value={gradingSearch}
+                    onChange={e => setGradingSearch(e.target.value)}
+                    className="w-full pr-8 pl-8 py-1.5 text-xs bg-white rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                  />
+                  {gradingSearch && (
+                    <button
+                      onClick={() => setGradingSearch('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      title="مسح البحث"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">
+                    عرض <strong className="text-slate-800">{filteredGradingStudents.length}</strong> من أصل {activeClass.students.length} تلميذ
+                  </span>
+                  {gradingSearch.trim() && (
+                    <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-950 font-bold px-2.5 py-0.5 rounded-full text-[11px] shadow-xs border border-amber-300">
+                      <Search className="w-3 h-3 text-amber-700" />
+                      تتضمن الحرف: «{gradingSearch}» ({filteredGradingStudents.length} تلميذ)
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-right text-xs border-collapse">
                   <thead>
@@ -3912,15 +4187,29 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {activeClass.students.map((st, idx) => {
-                      const cc = calcContinuousScore(st.bonusPoints);
-                      const avg = calcStudentAverage(st, activeClass.hasTP);
-                      return (
-                        <tr key={st.id} className="hover:bg-slate-50">
-                          <td className="py-2.5 px-2.5 font-bold text-slate-400">{idx + 1}</td>
-                          <td className="py-2.5 px-3 font-bold text-slate-800 whitespace-nowrap">
-                            {st.lastName} {st.firstName}
-                          </td>
+                    {filteredGradingStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={activeClass.hasTP ? 10 : 9} className="py-12 text-center text-slate-400 bg-slate-50">
+                          <p className="font-bold text-slate-600 mb-1">لم يتم العثور على أي تلميذ يتضمن اسمه «{gradingSearch}» في هذا القسم</p>
+                          <button
+                            type="button"
+                            onClick={() => setGradingSearch('')}
+                            className="text-xs text-blue-600 font-bold hover:underline"
+                          >
+                            مسح البحث وعرض كافة التلاميذ
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredGradingStudents.map((st, idx) => {
+                        const cc = calcContinuousScore(st.bonusPoints);
+                        const avg = calcStudentAverage(st, activeClass.hasTP);
+                        return (
+                          <tr key={st.id} className="hover:bg-slate-50 transition">
+                            <td className="py-2.5 px-2.5 font-bold text-slate-400">{idx + 1}</td>
+                            <td className="py-2.5 px-3 font-bold text-slate-800 whitespace-nowrap">
+                              <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={gradingSearch} />
+                            </td>
                           <td className="py-2.5 px-2 text-center">
                             <span className={`px-2 py-0.5 rounded font-bold ${st.bonusPoints >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                               {st.bonusPoints > 0 ? `+${st.bonusPoints}` : st.bonusPoints}
@@ -3979,7 +4268,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                           </td>
                         </tr>
                       );
-                    })}
+                    }))}
                   </tbody>
                 </table>
               </div>
@@ -5210,7 +5499,99 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             showNotice(`تم حفظ بيانات وتوصيات التلميذ ${updated.lastName} ${updated.firstName} بنجاح`);
           }}
           calcAverage={calcStudentAverage}
+          onDeleteStudent={(id) => {
+            deleteStudent(id, `${selectedStudentForDetails.student.lastName} ${selectedStudentForDetails.student.firstName}`, selectedStudentForDetails.classInfo.id);
+          }}
         />
+      )}
+
+      {/* نافذة تأكيد حذف تلميذ فردي (مباشرة وبدون الاعتماد على نافذة المتصفح) */}
+      {studentToDeleteModal && (
+        <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-rose-200 text-center space-y-4 animate-scaleUp">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-black text-slate-900 text-base">تأكيد حذف التلميذ</h4>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                هل أنت متأكد من حذف التلميذ <strong className="text-rose-700 font-bold">{studentToDeleteModal.student.lastName} {studentToDeleteModal.student.firstName}</strong> نهائياً من قسم <span className="font-bold text-slate-700">{studentToDeleteModal.classInfo.name}</span>؟
+              </p>
+              <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                ⚠️ سيتم حذف التلميذ وكافة نقاطه وسجلاته وغياباته فوراً.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  deleteStudent(
+                    studentToDeleteModal.student.id,
+                    `${studentToDeleteModal.student.lastName} ${studentToDeleteModal.student.firstName}`,
+                    studentToDeleteModal.classInfo.id
+                  );
+                  setStudentToDeleteModal(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs transition cursor-pointer shadow-sm"
+              >
+                نعم، تأكيد الحذف
+              </button>
+              <button
+                type="button"
+                onClick={() => setStudentToDeleteModal(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة تأكيد الحذف المتعدد للتلاميذ */}
+      {showBatchDeleteConfirmModal && (
+        <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-rose-200 text-center space-y-4 animate-scaleUp">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h4 className="font-black text-slate-900 text-base">تأكيد الحذف المتعدد</h4>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                هل أنت متأكد من حذف <strong className="text-rose-700 font-mono text-sm">{selectedStudentIdsForDelete.length}</strong> تلاميذ المحددين نهائياً من قسم <span className="font-bold text-slate-700">{activeClass.name}</span>؟
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const count = selectedStudentIdsForDelete.length;
+                  setClasses(prev =>
+                    prev.map(c =>
+                      c.id === activeClass.id
+                        ? { ...c, students: c.students.filter(x => !selectedStudentIdsForDelete.includes(x.id)) }
+                        : c
+                    )
+                  );
+                  setSelectedStudentIdsForDelete([]);
+                  setIsBatchDeleteMode(false);
+                  setShowBatchDeleteConfirmModal(false);
+                  showNotice(`✓ تم حذف ${count} تلاميذ بنجاح من القسم`);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs transition cursor-pointer shadow-sm"
+              >
+                نعم، حذف ({selectedStudentIdsForDelete.length}) تلاميذ
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowBatchDeleteConfirmModal(false)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
 

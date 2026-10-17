@@ -1,111 +1,80 @@
-# Redesign & Simplification Plan: Ultra-Clean Registration, Admin Panel & Parent Portal
+# خطة الهيكلة الشاملة والإصلاح الجذري لمنصة الدفتر اليومي الذكي للأستاذ
 
-A comprehensive plan to simplify the registration experience, remove test features and scenario bars, streamline the admin control panel exclusively for `djazild@gmail.com`, establish a dedicated parents section without login, and ensure real-time persistence with Firebase Firestore.
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> All key product decisions have been confirmed by the user through clarification questions:
-> 1. **New Teacher Registration Flow**: Redirect new teachers to a clean, dedicated pending page showing BaridiMob RIP (`00799999002093331792`) and a direct WhatsApp activation button.
-> 2. **Admin Control Panel (`djazild@gmail.com`)**: Ultra-simple list containing registered accounts with only two core actions: **Accept Activation (تفعيل)** and **Reject/Delete (رفض وحذف)**.
-> 3. **Parent Portal**: Dedicated, independent tab on the main page for parents to look up student grades, averages, conduct, and absences using the student's unique code (`parentCode`).
-> 4. **Test & Scenario Removal**: Complete removal of `SecurityAuditBar` (the 7 scenarios bar) and all mock/test account generation buttons.
+هذه الخطة مخصصة لتنفيذ إعادة هيكلة وإصلاح برمجية شاملة لمنصة «الدفتر اليومي الذكي للأستاذ في الطور الثانوي» وفق متطلبات الإدارة وضوابط الجودة السحابية والأمان.
 
 ---
 
-## 1. Overview & Core Concept
+## 1. تشخيص الوضع الحالي وتحديد أسباب الأخطاء الجذرية
 
-- **What It Does**: Transforms the platform into a streamlined Algerian secondary school digital notebook app featuring:
-  1. An ultra-minimal landing/registration page with 1-click Google Sign-In and BaridiMob RIP (`00799999002093331792`) transfer details.
-  2. A dedicated **Parent Portal** tab allowing parents to view their child's academic report without needing an account.
-  3. A clean **Pending Activation Page** for newly registered teachers.
-  4. A minimal **Admin Control Panel** exclusively for `djazild@gmail.com` with real-time Firebase Firestore synchronization to accept or reject/delete teacher requests.
-- **Target Audience**: Algerian secondary school teachers (Sciences, Math, Physics, Literature) and parents tracking student progress.
+بعد فحص الهيكل الحالي للمشروع (`App.tsx`, `LandingPage.tsx`, `AdminSubscriptionManager.tsx`, `subscriptionService.ts`, `firebaseSubscriptionService.ts`, `server.ts`):
 
----
+1. **سبب تفعيل الحسابات الجديدة تلقائياً**:
+   - وجود قيم افتراضية ومخزنة في السيرفر الكلاسيكي ومحلياً تعيد الحسابات القديمة أو تضع حالة `active` تلقائياً عند التسجيل بحسابات تجريبية.
+   - عدم اعتماد حالة المعرف الثابت المستخرج من مصادقة Google الموثوقة كمرجع وحيد للحساب.
 
-## 2. Visual Architecture & Component Flow
+2. **سبب عودة الحسابات بعد الحذف**:
+   - دمج البيانات في `AdminSubscriptionManager.tsx` كان يدمج `firestoreMap` مع الحالة السابقة `prev` باستخدام `{ ...prev, ...firestoreMap }` مما يجعل الحساب المحذوف من Firestore يظل عالقاً في الذاكرة المحلية (`prev`).
+   - خادم Express لم يكن ينفذ الحذف الكامل من القائمة السوداء والمخزن السحابي عند تكرار الاستعلام.
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                TOP NAVIGATION CONTRACT                                 │
-│  [Logo: دفتر الأستاذ]      [Tabs: الرئيسية | لـلأولياء | عن الدفتر]      [تسجيل الدخول عبر Google]  │
-└───────────────────────────────────┬────────────────────────────────────────────────────┘
-                                    │
-          ┌─────────────────────────┴─────────────────────────┐
-          │                                                   │
-  ┌───────▼──────────────────────────┐             ┌──────────▼─────────────────────────┐
-  │     TEACHER REGISTRATION FLOW     │             │     PARENT PORTAL TAB (NO LOGIN)   │
-  │  - 1-Click Google Sign-In        │             │  - Search box: Student Code        │
-  │  - BaridiMob RIP Info            │             │  - Displays: Grades, Averages,     │
-  │  - Instant save to Firestore     │             │    Conduct & Absence Records       │
-  └───────────────┬──────────────────┘             └────────────────────────────────────┘
-                  │
-  ┌───────────────▼──────────────────┐
-  │  PENDING PAGE / STATUS CHECK     │
-  │  - Status: "حسابك قيد المراجعة"   │
-  │  - RIP: 00799999002093331792     │
-  │  - Direct WhatsApp Contact Button│
-  └───────────────┬──────────────────┘
-                  │
-  ┌───────────────▼─────────────────────────────────────────────────────────────────────┐
-  │                   ADMIN CONTROL PANEL (djazild@gmail.com STRICTLY)                   │
-  │  - Registered Teachers Table (Email, Name, Requested Date, Status)                   │
-  │  - Action 1: [تفعيل] (Accept & Activate)                                            │
-  │  - Action 2: [رفض وحذف] (Reject & Permanently Delete from Firestore)                 │
-  └─────────────────────────────────────────────────────────────────────────────────────┘
-```
+3. **سبب المشاكل في الموبايل وعرض بيانات التلميذ**:
+   - كان التطبيق يقوم بالتمرير (Scroll) أسفل الصفحة لعرض التفاصيل بدل إظهار النافذة المنبثقة الشاملة (`StudentDetailsModal`).
+
+4. **الاشتراكات المحددة بمدد زمنية (1 شهر، 6 أشهر، سنة)**:
+   - الكود الحالي يحسب تواريخ الانتهاء `expiresAt` ويغير حالة الحساب إلى `expired`. سيتم تحويل المنطق بالكامل ليصبح **اشتراكاً مدى الحياة (Lifetime Access)** بدون تاريخ انتهاء.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+## 2. مراحل التنفيذ التفصيلية
 
-1. **Complete Removal of Scenario Simulation & Test Accounts**:
-   - *Decision*: Remove `SecurityAuditBar` and all test generator buttons (`prof.test...`, `generateTestSubscription`).
-   - *Rationale*: Eliminates clutter and ensures the admin panel displays only genuine user registrations from Firestore.
+### المرحلة 1: إصلاح دورة تسجيل الأستاذ وتوليد السجل الدائم
+- الاعتماد المباشر على مصادقة Google لاستخراج البريد الحقيقي والاسم ومعرّف Google UID بدون طلب كتابة البريد يدوياً من الواجهة.
+- إنشاء سجل موحد ودائم في Firestore وسيرفر التطبيق بوضعية `pending` فور نجاح التسجيل.
+- يمنع إنشاء سجلات مكررة عند إعادة التحميل أو تسجيل الخروج/الدخول.
 
-2. **Ultra-Clean Registration Page**:
-   - *Decision*: Simplify text, highlight Google Sign-In, and display the official BaridiMob RIP `00799999002093331792`.
-   - *Rationale*: Directs teachers quickly to signup without overwhelming text or marketing jargon.
+### المرحلة 2: توحيد مصدر البيانات ومزامنة لوحة الإدارة
+- توحيد مصدر بيانات لوحة الإدارة من مجموعة `subscriptions` في Firestore.
+- إصلاح دالة الاستماع المباشر `subscribeToAllSubscriptionsInFirestore` بتبديل الحالة بالكامل `setSubscriptions(filtered)` بدل الدمج المتراكم لضمان اختفاء الحسابات المحذوفة فوراً.
+- إظهار الحسابات الجديدة بحالة `pending` فور تسجليها في اللوحة.
 
-3. **Dedicated Parent Portal Tab**:
-   - *Decision*: Position a dedicated tab "بوابة الأولياء" in the header navigation that opens a clean search interface for parents using student codes (e.g. `BAC-8821`).
-   - *Rationale*: Grants parents instant access to their children's records while requiring zero registration.
+### المرحلة 3: الحذف النهائي الحقيقي وإدارة الحسابات المحذوفة
+- عند ضغط المشرف على «رفض / حذف»:
+  1. إظهار نافذة تأكيد للمشرف.
+  2. مسح المستند نهائياً من Firestore باستخدام `deleteDoc`.
+  3. إضافة البريد للقائمة السوداء للمحذوفات `DELETED_EMAILS_KEY` والسيرفر `deleted_subscriptions.json`.
+  4. حذف المفتاح فوراً من الواجهة وحظر إعادة إنشائه تلقائياً عند تسجيل الدخول بنفس البريد مع إظهار الرسالة المحددة.
+  5. تمكين الأدمن فقط من إمكانية استعادة وتفعيل الحساب المحذوف مباشرة من لوحة التحكم.
 
-4. **Streamlined Admin Panel**:
-   - *Decision*: Limit access strictly to `djazild@gmail.com`. Simplify the UI to display only registered teachers with two primary actions: **تفعيل (Activate)** and **رفض وحذف (Reject/Delete)**.
-   - *Rationale*: Offers maximum efficiency with minimum cognitive load and real-time Firestore database sync.
+### المرحلة 4: حصر الصلاحيات الإدارية بالمشرف الرئيسي (`djazild@gmail.com`)
+- تخصيص لوحة الإدارة حصراً للحساب `djazild@gmail.com`.
+- تأمين جميع العمليات الإدارية (تفعيل، تعليق، حذف، استعادة) بالتحقق السحابي والمحلي من بريد المدير الحقيقي.
+- تفعيل حساب المدير دائماً بصلاحيات مجانية غير قابلة للإلغاء أو الانتهاء.
+
+### المرحلة 5: تحويل نظام الاشتراكات إلى مدى الحياة حصراً
+- إلغاء الاشتراكات الزمنية (شهر، 6 أشهر، سنة) وإلغاء حساب تواريخ الانتهاء للوصول.
+- اعتماد الحالات الأربع فقط:
+  - `pending`: بانتظار التفعيل.
+  - `active`: مفعّل مدى الحياة.
+  - `suspended`: موقوف إدارياً.
+  - `deleted`: محذوف.
+
+### المرحلة 6: تعزيز بوابة ولي الأمر المستقلة
+- الحفاظ التام على فضاء الأولياء المستقل والمجاني، القائم على إدخال كود التلميذ الموحد (مثل: `BAC-8821`) دون الحاجة لتسجيل دخول أو دفع أي رسوم.
+
+### المرحلة 7: مراجعة الواجهات وتجربة المستخدم وصياغة النصوص
+- إعادة صياغة كافة النصوص بلغة عربية واضحة ومباشرة مع دعم RTL وتصميم متجاوب مع كافة أحجام الهواتف (من 320px إلى 430px).
+- إظهار نافذة `StudentDetailsModal` المنبثقة فوراً عند النقر على اسم التلميذ دون التمرير للأسفل.
 
 ---
 
-## 4. Technical Strategy & Data Flow
+## 3. خطة الاختبارات والتحقق من الجودة
 
-- **Persistence Layer**:
-  - Primary collection in Firestore: `subscriptions/{teacherEmailKey}`.
-  - Data shape: `TeacherSubscription` (`teacherEmail`, `teacherName`, `status`, `planId`, `requestedAt`, `activatedAt`, `adminNotes`).
-- **Google Sign-In Modal & Auto Registration**:
-  - `handleGoogleSignIn(user)` in `App.tsx` calls `registerOrUpdateGoogleUser(user)`.
-  - Automatically writes `{ teacherEmail, teacherName, status: 'pending', requestedAt: new Date().toISOString() }` directly to Firestore.
-- **Admin Authentication**:
-  - `djazild@gmail.com` is verified as the sole admin. Non-admin users attempting to open the admin panel will be blocked.
+1. اختبار تسجيل أستاذ جديد والتأكد من إدراج حسابه بوضعية `pending`.
+2. اختبار ظهور الحساب المباشر واللحظي بكنترول المشرف `djazild@gmail.com`.
+3. اختبار عدم قدرة الأستاذ الجديد من دخول الدفتر حتى يقوم المشرف بالتفعيل.
+4. اختبار التفعيل المباشر وتحول الحساب إلى `active` بنجاح ودخوله الدائم للمنصة.
+5. اختبار الحذف النهائي وتأكيد عدم عودة الحساب بعد تحديث الصفحة.
+6. اختبار منع الوصول الإداري عن غير المشرف `djazild@gmail.com`.
+7. اختبار استقلالية بوابة الأولياء بالكود.
+8. إجراء الفحص البرمجي الكامل `compile_applet` و `lint_applet`.
 
 ---
-
-## 5. Step-by-Step Implementation Outline
-
-1. **Remove Scenario & Test Features**:
-   - Remove `SecurityAuditBar` component and references in `App.tsx`.
-   - Remove `generateTestSubscription` and test preset buttons in `LandingPage.tsx` and `AdminSubscriptionManager.tsx`.
-2. **Update BaridiMob Config**:
-   - Set official BaridiMob RIP to `00799999002093331792` in `subscriptionService.ts` and UI views.
-3. **Refactor LandingPage.tsx**:
-   - Streamline visual layout, reduce copy density, refine Google Sign-In button and BaridiMob card.
-   - Add a dedicated **Parent Portal** tab view ("بوابة المتابعة للأولياء") for searching student codes.
-4. **Refactor Teacher Subscription / Pending Page**:
-   - Ensure new signups see the clean Pending status view ("حسابك قيد المراجعة والتفعيل") with BaridiMob details and direct WhatsApp link.
-5. **Simplify AdminSubscriptionManager.tsx**:
-   - Keep only registered teachers (exclude any test accounts).
-   - Display minimal columns: Teacher Name & Email, Registration Date, Status badge, and two actions: **تفعيل** (Green) and **رفض وحذف** (Red).
-   - Connect directly to `subscribeToAllSubscriptionsInFirestore` for instant real-time UI updates.
-6. **Verification & Build Check**:
-   - Run `compile_applet` and `lint_applet` to ensure zero compilation or type errors.

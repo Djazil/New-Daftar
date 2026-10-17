@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,40 +59,16 @@ function removeDeletedEmailData(email: string): void {
 
 // Default initial subscriptions
 const DEFAULT_SUBSCRIPTIONS = {
-  'teacher@gmail.com': {
-    teacherEmail: 'teacher@gmail.com',
-    teacherName: 'أ. محمد العيد',
-    wilaya: '16 - الجزائر',
-    commune: 'الجزائر الوسطى',
-    phone: '0555123456',
-    schoolName: 'ثانوية العقيد لطفي',
-    subject: 'علوم فزيائية',
-    planId: 'annual_pro',
+  'djazild@gmail.com': {
+    teacherEmail: 'djazild@gmail.com',
+    teacherName: 'الأستاذ المشرف djazild',
+    planId: 'lifetime',
     status: 'active',
-    startDate: '2025-09-01T08:00:00.000Z',
-    expiryDate: '2026-08-31T23:59:59.000Z',
-    paymentMethod: 'ccp',
-    receiptNumber: 'CCP-2025-99881',
-    amountPaid: 3500,
-    requestedAt: '2025-08-30T10:00:00.000Z',
-    activatedAt: '2025-09-01T08:00:00.000Z',
-    notes: 'تفعيل سنوي للموسم الدراسي 2025-2026'
-  },
-  'prof.karim.dz@gmail.com': {
-    teacherEmail: 'prof.karim.dz@gmail.com',
-    teacherName: 'أ. كريم المنصوري',
-    wilaya: '31 - وهران',
-    commune: 'وهران',
-    phone: '0661223344',
-    schoolName: 'ثانوية حاسيبة بن بوعلي',
-    subject: 'العلوم الفيزيائية والتكنولوجيا',
-    planId: 'annual_pro',
-    status: 'pending',
-    paymentMethod: 'baridimob',
-    receiptNumber: 'BM-2026-44120',
-    amountPaid: 3500,
-    requestedAt: new Date().toISOString(),
-    notes: 'طلب جديد في انتظار المراجعة والتأكيد من المشرف'
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: '2024-01-01T00:00:00.000Z',
+    adminNotes: 'حساب المشرف العام والمدير الرئيسي'
   }
 };
 
@@ -125,7 +102,8 @@ function saveSubscriptionsData(data: Record<string, any>): boolean {
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API Route: Get all subscriptions
   app.get('/api/subscriptions', (req, res) => {
@@ -476,6 +454,115 @@ async function startServer() {
     }
 
     res.json({ success: true, message: 'تم إلغاء الاشتراك بنجاح' });
+  });
+
+  // API Route: OCR Extract students from list image (supports up to 100+ students)
+  app.post('/api/ocr/extract-students', async (req, res) => {
+    try {
+      const { imageBase64, mimeType } = req.body;
+      if (!imageBase64) {
+        return res.status(400).json({ success: false, message: 'صورة ورقة القائمة مطلوبة' });
+      }
+
+      // Initialize Gemini SDK with User-Agent telemetry and injected API Key
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build'
+          }
+        }
+      });
+
+      // Robustly strip any data url prefix (e.g. data:image/jpeg;base64, data:image/png;base64,)
+      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
+      const resolvedMime = mimeType && mimeType.includes('/') ? mimeType : 'image/jpeg';
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: resolvedMime
+            }
+          },
+          {
+            text: `أنت خبير قراءة واستخراج الوثائق المدرسية الرسمية لوزارة التربية الوطنية الجزائرية (قوائم تلاميذ الأقسام، كشوف النقاط، محاضر التنقيط).
+المطلوب منك: قراءة الصورة المرفوعة واستخراج جميع أسماء وتلاميذ القائمة كما هي مكتوبة في الورقة تماماً وبكل أمانة ودقة.
+
+قواعد صارمة جداً لا تحتمل أي خطأ:
+1. استخرج حصراً الأسماء والألقاب الموجودة فعلياً في وثيقة القائمة المرفوعة.
+2. ممنوع منعاً باتاً توليد أو تأليف أو تخمين أي اسم وهمي من عندك.
+3. إذا كانت القائمة تحتوي على 5 أو 30 أو 60 أو 100 تلميذ، استخرج كل تلميذ بالترتيب الرقمي للقائمة.
+4. افصل اللقب (Nom/lastName) عن الاسم (Prénom/firstName). في الوثائق الجزائرية يكون اللقب أولاً ثم الاسم. إذا كان الاسم مركباً مثل "محمد الأمين" أو "فاطمة الزهراء"، اجعل اللقب في lastName والاسم كاملاً في firstName.
+5. إذا كانت الصورة رديئة تماماً أو بيضاء أو لا تحتوي على قائمة تلاميذ، أعد مصفوفة فارغة [] ولا تخترع شيئاً.`
+          }
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                lastName: {
+                  type: Type.STRING,
+                  description: 'لقب التلميذ كما هو مكتوب في الوثيقة'
+                },
+                firstName: {
+                  type: Type.STRING,
+                  description: 'اسم التلميذ كما هو مكتوب في الوثيقة'
+                }
+              },
+              required: ['lastName', 'firstName']
+            }
+          }
+        }
+      });
+
+      const text = response.text || '[]';
+      let parsedStudents: any[] = [];
+      try {
+        parsedStudents = JSON.parse(text);
+      } catch {
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          parsedStudents = JSON.parse(jsonMatch[0]);
+        }
+      }
+
+      if (!Array.isArray(parsedStudents) || parsedStudents.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'لم يتم العثور على أي أسماء تلاميذ واضحة في الصورة المرفوعة. يرجى التأكد من وضوح تصوير ورقة القائمة وإعادة المحاولة.'
+        });
+      }
+
+      // Filter and sanitize actual extracted students
+      const validStudents = parsedStudents
+        .filter(s => s && (s.lastName || s.firstName))
+        .map(s => ({
+          lastName: (s.lastName || '').trim() || 'غير محدد',
+          firstName: (s.firstName || '').trim() || 'تلميذ'
+        }));
+
+      if (validStudents.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'لم يتعرف النظام على أسماء مقروءة في الصورة. يرجى التقاط صورة واضحة للائحة الأسماء.'
+        });
+      }
+
+      console.log(`[OCR] Extracted ${validStudents.length} real students from image.`);
+      res.json({ success: true, students: validStudents });
+    } catch (err: any) {
+      console.error('OCR Extraction Error:', err);
+      res.status(500).json({
+        success: false,
+        message: `تعذر استخراج الأسماء من الصورة: ${err.message || 'خطأ في معالجة الذكاء الاصطناعي'}. يرجى التأكد من وضوح الورقة والمحاولة مجدداً.`
+      });
+    }
   });
 
   // API Route: Seed default sample subscriptions
