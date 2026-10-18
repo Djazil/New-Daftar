@@ -56,6 +56,7 @@ export interface Student {
   areasForImprovement?: string; // نقاط التحسين والمتابعة
   coordinationStatus?: 'good' | 'followup' | 'urgent' | 'pending'; // حالة التنسيق
   lastCoordinationDate?: string; // تاريخ آخر تواصل مع الولي
+  privateTeacherNotes?: string; // ملاحظات الأستاذ السرية والخاصة (لا تظهر لولي الأمر)
 }
 
 export interface LessonPlanNote {

@@ -229,6 +229,15 @@ async function startServer() {
       return res.status(400).json({ success: false, message: 'البريد الإلكتروني للأستاذ المستهدف مطلوب' });
     }
 
+    const callerClean = (currentCallerEmail || '').trim().toLowerCase();
+    const isAdmin = callerClean === 'djazild@gmail.com' || callerClean === 'hdjazil95@gmail.com';
+    if (!isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح لك بتفعيل الحسابات. العملية تتطلب حساب المشرف العام djazild@gmail.com'
+      });
+    }
+
     const emailClean = targetTeacherEmail.trim().toLowerCase();
     const subs = getSubscriptionsData();
     const now = new Date();
@@ -456,6 +465,47 @@ async function startServer() {
     } else {
       res.status(400).json({ success: false, message: 'بيانات السجل غير مكتملة' });
     }
+  });
+
+  // Persistent storage directory for teacher data (classes, students, marks, curriculum)
+  const TEACHERS_DATA_DIR = path.join(DATA_DIR, 'teachers');
+  if (!fs.existsSync(TEACHERS_DATA_DIR)) {
+    fs.mkdirSync(TEACHERS_DATA_DIR, { recursive: true });
+  }
+
+  // API Route: Sync teacher data to server
+  app.post('/api/teacher/sync', (req, res) => {
+    const { teacherEmail, data } = req.body;
+    if (!teacherEmail || !data) {
+      return res.status(400).json({ success: false, message: 'البريد وبيانات الأستاذ مطلوبة' });
+    }
+    const cleanKey = teacherEmail.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const filePath = path.join(TEACHERS_DATA_DIR, `${cleanKey}.json`);
+    try {
+      fs.writeFileSync(filePath, JSON.stringify({ ...data, lastSyncedAt: new Date().toISOString() }, null, 2), 'utf-8');
+      res.json({ success: true, message: 'تم حفظ ومزامنة بيانات الأستاذ على السيرفر بنجاح' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: 'فشل حفظ بيانات الأستاذ: ' + err?.message });
+    }
+  });
+
+  // API Route: Load teacher data from server
+  app.get('/api/teacher/load/:email', (req, res) => {
+    const email = req.params.email;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'البريد مطلوب' });
+    }
+    const cleanKey = email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const filePath = path.join(TEACHERS_DATA_DIR, `${cleanKey}.json`);
+    if (fs.existsSync(filePath)) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        return res.json({ success: true, data: JSON.parse(content) });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: 'تعذر قراءة بيانات الأستاذ' });
+      }
+    }
+    res.json({ success: true, data: null });
   });
 
   // API Route: Extend subscription

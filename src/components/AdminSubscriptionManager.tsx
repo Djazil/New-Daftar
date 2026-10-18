@@ -107,17 +107,32 @@ export default function AdminSubscriptionManager({
     setTimeout(() => setFeedbackMsg(null), 4000);
   };
 
+  const [activatingEmail, setActivatingEmail] = useState<string | null>(null);
+
   // 1. تفعيل الاشتراك
-  const handleActivate = async (teacherEmail: string, planId: SubscriptionPlanId) => {
-    const res = await activateTeacherSubscription(currentUser.email, teacherEmail, {
-      adminNotes: `تم تفعيل الحساب (${planId}) من طرف المشرف الرئيسي`
-    });
-    if (res.success) {
-      showToast(res.message, 'success');
-      setSelectedSubForEdit(null);
-      await reloadData();
-    } else {
-      showToast(res.message, 'error');
+  const handleActivate = async (teacherEmail: string, planId: SubscriptionPlanId = 'lifetime') => {
+    setActivatingEmail(teacherEmail);
+    try {
+      const res = await activateTeacherSubscription(currentUser.email, teacherEmail, planId, {
+        adminNotes: `تم تفعيل الحساب (${planId === 'lifetime' ? 'مدى الحياة' : planId}) من طرف المشرف الرئيسي`
+      });
+      if (res.success) {
+        showToast(res.message, 'success');
+        setSelectedSubForEdit(null);
+        if (res.subscription) {
+          setSubscriptions(prev => ({
+            ...prev,
+            [teacherEmail.toLowerCase()]: res.subscription!
+          }));
+        }
+        await reloadData();
+      } else {
+        showToast(res.message, 'error');
+      }
+    } catch (err: any) {
+      showToast('حدث خطأ أثناء تفعيل الحساب: ' + (err?.message || ''), 'error');
+    } finally {
+      setActivatingEmail(null);
     }
   };
 
@@ -462,17 +477,29 @@ export default function AdminSubscriptionManager({
                     {!isAdmin && (
                       <div className="flex items-center gap-1.5 shrink-0 w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-slate-800 flex-wrap">
                         
-                        {/* 1. زر التفعيل / التجديد */}
+                        {/* 1. زر التفعيل المباشر مدى الحياة */}
+                        {isPending && (
+                          <button
+                            onClick={() => handleActivate(item.teacherEmail, 'lifetime')}
+                            disabled={activatingEmail === item.teacherEmail}
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+                            title="تفعيل حساب الأستاذ مدى الحياة فوراً"
+                          >
+                            <CheckCircle2 className={`w-3.5 h-3.5 ${activatingEmail === item.teacherEmail ? 'animate-spin' : ''}`} />
+                            <span>{activatingEmail === item.teacherEmail ? 'جارٍ التفعيل...' : 'تفعيل مدى الحياة'}</span>
+                          </button>
+                        )}
+
+                        {/* زر خيارات التفعيل */}
                         <button
                           onClick={() => {
                             setSelectedSubForEdit(item);
-                            setSelectedPlan('lifetime');
+                            setSelectedPlan(item.planId && item.planId !== 'none' ? item.planId : 'lifetime');
                           }}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
-                          title="تفعيل اشتراك الأستاذ"
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="تخصيص خطة التفعيل أو المدة"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>تفعيل</span>
+                          <span>{isActive ? 'تعديل الخطة' : 'خيارات...'}</span>
                         </button>
 
                         {/* 2. زر إلغاء الاشتراك (فقط إلغاء الاستحقاق دون مساس بالحساب) */}
@@ -581,9 +608,11 @@ export default function AdminSubscriptionManager({
                 </button>
                 <button
                   onClick={() => handleActivate(selectedSubForEdit.teacherEmail, selectedPlan)}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30 transition cursor-pointer"
+                  disabled={activatingEmail === selectedSubForEdit.teacherEmail}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  تأكيد التفعيل
+                  {activatingEmail === selectedSubForEdit.teacherEmail && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{activatingEmail === selectedSubForEdit.teacherEmail ? 'جارٍ التفعيل...' : 'تأكيد التفعيل'}</span>
                 </button>
               </div>
             </div>

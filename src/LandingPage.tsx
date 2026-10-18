@@ -273,58 +273,88 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
         {activeTab === 'teachers' && (
           <div className="space-y-8 animate-fadeIn">
             
-            {/* الهيدر البسيط المبسط */}
-            <div className="text-center max-w-2xl mx-auto space-y-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold">
+            {/* بطاقة الواجهة الرئيسية الزجاجية الراقية المستوحاة من Apple */}
+            <div className="relative overflow-hidden rounded-3xl p-6 sm:p-10 border border-white/10 bg-slate-900/60 backdrop-blur-2xl shadow-2xl text-center space-y-6">
+              
+              {/* إشعار الهوية البيداغوجية */}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-black shadow-xs mx-auto">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>المنصة البيداغوجية المتكاملة 2026/2027</span>
-              </span>
-              <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-                دفتر الأستاذ الذكي
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                تسيير الأقسام والنتائج، حساب المعدلات الفصلية، متابعة الغيابات، وتوفير كشوف وملاحظات مباشرة لأولياء التلاميذ بكل سهولة ودقة.
-              </p>
-            </div>
-
-            {/* بطاقة الدفع بريدي موب الحصرية المبرزة */}
-            <div className="max-w-xl mx-auto bg-gradient-to-b from-slate-900 to-slate-950 rounded-3xl p-6 border border-blue-500/30 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 text-blue-400">
-                  <CreditCard className="w-5 h-5" />
-                  <h3 className="text-sm font-bold text-white">تفعيل الاشتراك عبر بريدي موب (BaridiMob)</h3>
-                </div>
-                <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-bold">
-                  تفعيل سريح ومباشر
-                </span>
+                <span>المنظومة البيداغوجية للتعليم الثانوي بالجزائر • 2026/2027</span>
               </div>
 
-              <div className="space-y-3">
-                <p className="text-xs text-slate-300">
-                  قم بتحويل مبلغ الاشتراك عبر رقم الحساب البريدي الموحد (RIP)، ثم سجل دخولك عبر Google ليصل حسابك تلقائياً للإدارة:
+              {/* العنوان والوصف البيداغوجي */}
+              <div className="max-w-2xl mx-auto space-y-3">
+                <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight leading-tight">
+                  الدفتر اليومي الذكي للأستاذ
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
+                  أداة عمل عملية وفائقة السرعة للأستاذ داخل القسم الثانوي؛ تسيير الحضور والغيابات، رصد النقاط، التدرج السنوي، وتنسيق فوري مع أولياء التلاميذ.
                 </p>
+              </div>
+
+              {/* الزران الرئيسيان البارزان بتصميم زجاجي راقٍ وفق قرار المشرف */}
+              <div className="max-w-md mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+                
+                {/* 1. زر دخول الأستاذ */}
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleModal(true)}
+                  className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-sm shadow-xl shadow-blue-600/30 border border-blue-400/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2.5 cursor-pointer min-h-[52px]"
+                >
+                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                    <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                    <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                  </svg>
+                  <span>دخول الأستاذ</span>
+                </button>
+
+                {/* 2. زر فضاء ولي الأمر */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('parents')}
+                  className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm shadow-xl shadow-emerald-600/30 border border-emerald-400/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2.5 cursor-pointer min-h-[52px]"
+                >
+                  <Eye className="w-5 h-5 shrink-0 text-emerald-200" />
+                  <span>فضاء ولي الأمر</span>
+                </button>
+              </div>
+
+              {/* بطاقة معلومات الدفع عبر بريدي موب (BaridiMob) بتصميم زجاجي مدمج */}
+              <div className="max-w-xl mx-auto bg-slate-950/70 rounded-2xl p-4 sm:p-5 border border-slate-800 text-right space-y-3 mt-4">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                  <div className="flex items-center gap-2 text-blue-400 text-xs font-bold">
+                    <CreditCard className="w-4 h-4" />
+                    <span>تفعيل الاشتراك السنوي عبر بريدي موب (BaridiMob)</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                    حساب معتمد
+                  </span>
+                </div>
 
                 {/* رقم RIP الموحد البارز */}
-                <div className="bg-slate-950 p-4 rounded-2xl border border-blue-500/40 flex items-center justify-between gap-2 shadow-inner">
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-blue-500/30 flex items-center justify-between gap-2">
                   <div className="space-y-0.5">
-                    <span className="text-[10px] text-slate-400 block font-bold">رقم الحساب البريدي RIP:</span>
-                    <span className="font-mono text-base sm:text-lg font-black text-blue-400 tracking-wider dir-ltr block">
-                      00799999002093331792
+                    <span className="text-[10px] text-slate-400 block font-bold">رقم الحساب البريدي الموحد RIP:</span>
+                    <span className="font-mono text-sm sm:text-base font-black text-blue-400 tracking-wider dir-ltr block">
+                      {BARIDIMOB_CONFIG.ripNumber}
                     </span>
                   </div>
                   <button
+                    type="button"
                     onClick={handleCopyRip}
-                    className="p-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer shrink-0"
+                    className="p-2 sm:px-3 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer shrink-0"
                     title="نسخ رقم RIP"
                   >
                     {copiedRip ? (
                       <>
-                        <Check className="w-4 h-4 text-emerald-300" />
+                        <Check className="w-3.5 h-3.5 text-emerald-300" />
                         <span>تم النسخ</span>
                       </>
                     ) : (
                       <>
-                        <Copy className="w-4 h-4" />
+                        <Copy className="w-3.5 h-3.5" />
                         <span>نسخ RIP</span>
                       </>
                     )}
@@ -332,64 +362,25 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
                     <span className="text-slate-400 text-[10px] block">رقم الحساب CCP:</span>
-                    <span className="font-bold text-slate-200">0020933317 (المفتاح 92)</span>
+                    <span className="font-bold text-slate-200">0020933317 (مفتاح 92)</span>
                   </div>
-                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-slate-400 text-[10px] block">متابعة وتأكيد الواتساب:</span>
+                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+                    <span className="text-slate-400 text-[10px] block">تأكيد الوصل عبر WhatsApp:</span>
                     <a
                       href={`https://wa.me/${WHATSAPP_INTL_NUMBER}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-bold text-emerald-400 hover:underline flex items-center justify-center gap-1 dir-ltr"
+                      className="font-bold text-emerald-400 hover:underline flex items-center justify-center gap-1 dir-ltr text-xs"
                     >
                       <span>0656636033</span>
                       <MessageSquare className="w-3 h-3" />
                     </a>
                   </div>
                 </div>
-
-                <button
-                  onClick={() => setShowGoogleModal(true)}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>تسجيل حساب أستاذ جديد / دخول بحسابك</span>
-                </button>
-              </div>
-            </div>
-
-            {/* الميزات الأساسية باختصار شديد */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-4xl mx-auto">
-              <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-800 space-y-1.5">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center font-bold">
-                  1
-                </div>
-                <h4 className="text-xs font-bold text-white">إدارة الأقسام والنتائج</h4>
-                <p className="text-[11px] text-slate-400">حساب فوري للمعدلات، تصدير ملفات Excel والرقمنة الرسمية.</p>
               </div>
 
-              <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-800 space-y-1.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
-                  2
-                </div>
-                <h4 className="text-xs font-bold text-white">رادار اليقظة والغيابات</h4>
-                <p className="text-[11px] text-slate-400">تتبع الغيابات وتنبيهات فورية للتلاميذ وتنسيق مباشر مع الأولياء.</p>
-              </div>
-
-              <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-800 space-y-1.5">
-                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold">
-                  3
-                </div>
-                <h4 className="text-xs font-bold text-white">فضاء خاص بالأولياء</h4>
-                <p className="text-[11px] text-slate-400">كود موحد لكل تلميذ للبحث عن النتائج دون الحاجة لتسجيل حساب.</p>
-              </div>
             </div>
 
           </div>

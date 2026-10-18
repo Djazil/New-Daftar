@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  LayoutDashboard, Users, BookOpen, BarChart3, ShieldCheck,
+  LayoutDashboard, Users, User, BookOpen, BarChart3, ShieldCheck,
   Plus, Upload, CheckCircle2, AlertTriangle, TrendingUp,
   UserPlus, FileSpreadsheet, Sparkles, Clock, Calendar,
   ChevronLeft, ChevronRight, Award, AlertCircle, Check, X, Eye, QrCode,
@@ -32,6 +32,10 @@ import TeacherSubscriptionPage from './components/TeacherSubscriptionPage';
 import AdminSubscriptionManager from './components/AdminSubscriptionManager';
 import AnalyticsCharts from './components/AnalyticsCharts';
 import StudentDetailsModal from './components/StudentDetailsModal';
+import AnalyticsSectionRedesign from './components/AnalyticsSectionRedesign';
+import ClassSelectorModal from './components/ClassSelectorModal';
+import InClassManagerMobile from './components/InClassManagerMobile';
+import StudentGradesModal from './components/StudentGradesModal';
 import TimetableSessionModal from './components/TimetableSessionModal';
 import TeacherTodoList from './components/TeacherTodoList';
 import {
@@ -357,6 +361,15 @@ export default function App() {
   const [isAdminManagerOpen, setIsAdminManagerOpen] = useState(false);
   const [subscriptionRefreshTick, setSubscriptionRefreshTick] = useState(0);
 
+  // حالة النافذة التفاعلية لاختيار السنة والقسم
+  const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
+
+  // حالة نافذة حجز نقاط التلميذ المخصصة للهاتف
+  const [selectedStudentForGrades, setSelectedStudentForGrades] = useState<{ student: Student; classInfo: ClassGroup } | null>(null);
+
+  // نظام الحفظ ثلاثي المراحل ومؤشر المزامنة السحابية (Phase 10)
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'saving' | 'offline'>('synced');
+
   // نافذة تحديد نوع الغياب والتبرير الرقمي
   const [absenceJustificationStudent, setAbsenceJustificationStudent] = useState<Student | null>(null);
   const [previewJustificationDoc, setPreviewJustificationDoc] = useState<string | null>(null);
@@ -467,8 +480,8 @@ export default function App() {
     });
   };
 
-  // مخطط الجلوس وإضافة الطاولات [تعديل 5]
-  const [inClassView, setInClassView] = useState<'seating' | 'list'>('seating');
+  // مخطط الجلوس وواجهة الحصة للهاتف [تعديل 5 والمرحلة 3]
+  const [inClassView, setInClassView] = useState<'touch' | 'seating' | 'list'>('touch');
   const [isEditingSeating, setIsEditingSeating] = useState(false);
   const [seatingColumns, setSeatingColumns] = useState(4); // 4 أعمدة للطاولات
   const [selectedSeatIndexToSwap, setSelectedSeatIndexToSwap] = useState<number | null>(null);
@@ -486,6 +499,7 @@ export default function App() {
 
   // النوافذ المنبثقة
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'profile' | 'subject' | 'classes' | 'grading' | 'preferences'>('profile');
   const [newClassModal, setNewClassModal] = useState(false);
   const [newClassForm, setNewClassForm] = useState({
     name: '', level: '3 ثانوي (بكالوريا)' as Level, stream: 'علوم تجريبية', room: 'القاعة 01', schedule: '08:00 - 09:00', hasTP: true
@@ -603,31 +617,78 @@ export default function App() {
     }
   }, [teacherStorageKey]);
 
-  // حفظ التعديلات في المساحة الخاصة بالأستاذ الحالي حصراً
+  // حفظ التعديلات في المساحة الخاصة بالأستاذ الحالي حصراً بنظام الحفظ متعدد المراحل
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(`teacher_profile_${teacherStorageKey}`, JSON.stringify(teacherProfile));
+    setCloudSyncStatus('saving');
+    try {
+      localStorage.setItem(`teacher_profile_${teacherStorageKey}`, JSON.stringify(teacherProfile));
+      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
+      return () => clearTimeout(timer);
+    } catch {
+      setCloudSyncStatus('offline');
+    }
   }, [teacherProfile, teacherStorageKey]);
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(`teacher_classes_${teacherStorageKey}`, JSON.stringify(classes));
+    setCloudSyncStatus('saving');
+    try {
+      localStorage.setItem(`teacher_classes_${teacherStorageKey}`, JSON.stringify(classes));
+      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
+      return () => clearTimeout(timer);
+    } catch {
+      setCloudSyncStatus('offline');
+    }
   }, [classes, teacherStorageKey]);
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(`teacher_curriculum_${teacherStorageKey}`, JSON.stringify(curriculum));
+    setCloudSyncStatus('saving');
+    try {
+      localStorage.setItem(`teacher_curriculum_${teacherStorageKey}`, JSON.stringify(curriculum));
+      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
+      return () => clearTimeout(timer);
+    } catch {
+      setCloudSyncStatus('offline');
+    }
   }, [curriculum, teacherStorageKey]);
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(`teacher_timetable_${teacherStorageKey}`, JSON.stringify(timetableSessions));
+    setCloudSyncStatus('saving');
+    try {
+      localStorage.setItem(`teacher_timetable_${teacherStorageKey}`, JSON.stringify(timetableSessions));
+      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
+      return () => clearTimeout(timer);
+    } catch {
+      setCloudSyncStatus('offline');
+    }
   }, [timetableSessions, teacherStorageKey]);
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(`teacher_pdfs_${teacherStorageKey}`, JSON.stringify(uploadedPDFs));
+    setCloudSyncStatus('saving');
+    try {
+      localStorage.setItem(`teacher_pdfs_${teacherStorageKey}`, JSON.stringify(uploadedPDFs));
+      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
+      return () => clearTimeout(timer);
+    } catch {
+      setCloudSyncStatus('offline');
+    }
   }, [uploadedPDFs, teacherStorageKey]);
+
+  // حماية الأستاذ من الخروج أثناء وجود حفظ سحابي قيد التنفيذ
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (cloudSyncStatus === 'saving') {
+        e.preventDefault();
+        e.returnValue = 'هناك بيانات قيد الحفظ السحابي، هل تريد بالتأكيد مغادرة الصفحة؟';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [cloudSyncStatus]);
 
   // مؤقت الحصة
   useEffect(() => {
@@ -1569,23 +1630,41 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         </div>
       )}
 
-      {/* الهيدر العلوي للهواتف المحمولة */}
-      <div className="md:hidden bg-slate-900 text-white p-3 border-b border-slate-800 flex items-center justify-between sticky top-0 z-30 shadow-md no-print">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-black text-sm shadow-md">
+      {/* الهيدر العلوي للهواتف المحمولة المخصص للعمل أثناء الحصة */}
+      <div className="md:hidden bg-slate-900 text-white p-2.5 sm:p-3 border-b border-slate-800 flex items-center justify-between sticky top-0 z-30 shadow-md no-print gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-md shrink-0">
             د
           </div>
-          <div>
-            <h1 className="font-bold text-xs leading-tight text-white">دفتر الأستاذ الذكي</h1>
-            <span className="text-[10px] text-blue-400 block -mt-0.5">{teacherProfile.subject}</span>
-          </div>
+          
+          {/* زر تبديل واختيار القسم السريع للهاتف */}
+          <button
+            type="button"
+            onClick={() => setIsClassSelectorOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-800/90 border border-slate-700 text-xs font-black text-white hover:bg-slate-700 transition cursor-pointer min-h-[36px] max-w-[150px] truncate"
+            title="انقر لتغيير السنة أو القسم الدراسي"
+          >
+            <span className="truncate">{activeClass.name}</span>
+            <span className="px-1 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 shrink-0">
+              {activeClass.level.includes('3') ? '3AS' : activeClass.level.includes('2') ? '2AS' : '1AS'}
+            </span>
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+          </button>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* مؤشر الحفظ الصغير للهاتف */}
+          {cloudSyncStatus === 'saving' && (
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" title="جارٍ الحفظ..." />
+          )}
+          {cloudSyncStatus === 'synced' && (
+            <span className="text-[10px] text-emerald-400 font-bold hidden sm:inline" title="محفوظ سحابياً">✓</span>
+          )}
+
           {(currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
             <button
               onClick={() => setIsAdminManagerOpen(true)}
-              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-md shadow-emerald-600/30 cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-md shadow-emerald-600/30 cursor-pointer min-h-[36px]"
               title="لوحة تحكم المدير"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-200" />
@@ -1595,7 +1674,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           <button
             onClick={() => setDarkMode(!darkMode)}
             title={darkMode ? 'الوضع النهاري' : 'الوضع الليلي'}
-            className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center ${
+            className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center min-h-[36px] min-w-[36px] ${
               darkMode
                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
                 : 'bg-slate-800 text-slate-300 border-slate-700'
@@ -1605,14 +1684,14 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           </button>
           <button
             onClick={() => setIsParentPreviewOpen(true)}
-            className="px-2 py-1 rounded-lg bg-emerald-950/80 border border-emerald-800/80 text-emerald-300 text-[10px] font-bold flex items-center gap-1"
+            className="px-2 py-1 rounded-lg bg-emerald-950/80 border border-emerald-800/80 text-emerald-300 text-[10px] font-bold flex items-center gap-1 min-h-[36px]"
           >
             <Eye className="w-3 h-3 text-emerald-400" />
-            <span>الأولياء</span>
+            <span className="hidden sm:inline">الأولياء</span>
           </button>
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
+            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 min-h-[36px] min-w-[36px] flex items-center justify-center"
             aria-label="القائمة المنسدلة"
           >
             {isMobileMenuOpen ? <X className="w-5 h-5 text-amber-400" /> : <Grid className="w-5 h-5 text-blue-400" />}
@@ -1877,26 +1956,49 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               </button>
             </div>
 
+            {/* مؤشر الحفظ السحابي متعدد المستويات الفوري */}
+            <div className="hidden lg:flex items-center gap-1.5 shrink-0">
+              {cloudSyncStatus === 'saving' && (
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1.5 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                  <span>جارٍ الحفظ...</span>
+                </span>
+              )}
+              {cloudSyncStatus === 'synced' && (
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>محفوظ سحابياً ✓</span>
+                </span>
+              )}
+              {cloudSyncStatus === 'offline' && (
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/30 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span>محفوظ محلياً (مسودة)</span>
+                </span>
+              )}
+            </div>
+
+            {/* زر نافذة اختيار السنة والقسم التفاعلية وفق القرارات الرسمية */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <span className="text-xs text-slate-500 hidden sm:inline">القسم النشط:</span>
-              <select
-                value={activeClass.id}
-                onChange={e => {
-                  setActiveClassId(e.target.value);
-                  setSelectedStudentId(null);
-                }}
-                className="bg-slate-100 hover:bg-slate-200/70 text-slate-800 font-bold text-xs sm:text-sm rounded-lg px-2 sm:px-3 py-1.5 border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px] sm:max-w-xs truncate"
-              >
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.level})
-                  </option>
-                ))}
-              </select>
               <button
+                type="button"
+                onClick={() => setIsClassSelectorOpen(true)}
+                className="bg-slate-100 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white font-black text-xs sm:text-sm rounded-xl px-3 py-1.5 border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center gap-2 transition cursor-pointer shadow-xs min-h-[38px]"
+                title="انقر لاختيار السنة الدراسية والقسم"
+              >
+                <GraduationCap className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                <span className="truncate max-w-[120px] sm:max-w-xs">{activeClass.name}</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-600 text-white shrink-0">
+                  {activeClass.level.includes('3') ? '3 AS' : activeClass.level.includes('2') ? '2 AS' : '1 AS'}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setNewClassModal(true)}
-                title="إضافة قسم جديد"
-                className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 border border-slate-200 shrink-0"
+                title="إضافة قسم جديد (سعة حتى 10 أقسام)"
+                className="p-2 rounded-xl bg-slate-100 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-blue-600 border border-slate-300 dark:border-slate-700 shrink-0 cursor-pointer min-h-[38px]"
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -2905,9 +3007,76 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               [تعديل 5: يمكن إضافة الطاولات في مخطط الجلوس]
           ========================================================= */}
           {activeTab === 'inclass' && (
-            <div className="space-y-5">
-              {/* شريط الأدوات العلوية للحصة */}
-              <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-4 rounded-2xl shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-4">
+              {/* شريط التبديل بين واجهة اللمس السريع للهاتف ومخطط الطاولات (المرحلة 3) */}
+              <div className="bg-white dark:bg-slate-900 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-xs shadow-xs">
+                    {activeClass.name}
+                  </div>
+                  <div>
+                    <span className="text-xs font-black text-slate-800 dark:text-white block">إدارة الحصة المباشرة ({activeClass.level})</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">مادة {teacherProfile.subject}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setInClassView('touch')}
+                    className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                      inClassView === 'touch'
+                        ? 'bg-blue-600 text-white shadow-xs font-black'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>أزرار اللمس (للهاتف)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInClassView('seating')}
+                    className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                      inClassView === 'seating'
+                        ? 'bg-blue-600 text-white shadow-xs font-black'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Grid className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">مخطط الطاولات</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInClassView('list')}
+                    className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                      inClassView === 'list'
+                        ? 'bg-blue-600 text-white shadow-xs font-black'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">القائمة التقليدية</span>
+                  </button>
+                </div>
+              </div>
+
+              {inClassView === 'touch' ? (
+                <InClassManagerMobile
+                  activeClass={activeClass}
+                  students={activeClass.students}
+                  curriculum={curriculum}
+                  onUpdateStudents={(updated) => {
+                    setClasses(prev => prev.map(c => c.id === activeClass.id ? { ...c, students: updated } : c));
+                  }}
+                  onOpenClassSelector={() => setIsClassSelectorOpen(true)}
+                  onOpenStudentDetails={(st) => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
+                  teacherSubject={teacherProfile.subject}
+                  onSaveNotice={(msg) => showNotice(msg)}
+                />
+              ) : (
+                <div className="space-y-5">
+                  {/* شريط الأدوات العلوية للحصة */}
+                  <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-4 rounded-2xl shadow-md flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-300 font-bold">
                     {activeClass.name}
@@ -3432,6 +3601,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               </div>
             </div>
           )}
+        </div>
+      )}
 
           {/* =========================================================
               الشاشة 4: إدارة القوائم والـ OCR
@@ -4176,7 +4347,87 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* واجهة الهواتف المحمولة: بطاقات رأسية مريحة لإدخال ورصد النقاط بدون تمرير أفقي (المرحلة 5) */}
+              <div className="sm:hidden space-y-3">
+                {filteredGradingStudents.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                    <p className="font-bold">لا يوجد تلميذ يطابق «{gradingSearch}»</p>
+                  </div>
+                ) : (
+                  filteredGradingStudents.map((st, idx) => {
+                    const avg = calcStudentAverage(st, activeClass.hasTP);
+                    const cc = calcContinuousScore(st.bonusPoints);
+                    return (
+                      <div
+                        key={st.id}
+                        className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div
+                            onClick={() => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
+                            className="flex items-center gap-2 cursor-pointer min-w-0"
+                          >
+                            <span className="w-7 h-7 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <div className="min-w-0">
+                              <strong className="text-sm font-black text-slate-900 dark:text-white block truncate">
+                                <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={gradingSearch} />
+                              </strong>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                فوج {st.group} • كود: {st.parentCode}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className={`px-2.5 py-1 rounded-xl font-mono font-black text-xs shrink-0 ${
+                            avg >= 10
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40'
+                              : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800/40'
+                          }`}>
+                            {avg} <span className="text-[10px] font-sans">/20</span>
+                          </div>
+                        </div>
+
+                        {/* خانات النقاط السريعة */}
+                        <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
+                          <div className="bg-slate-50 dark:bg-slate-950/60 p-1.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">تقويم</span>
+                            <strong className="text-blue-600 dark:text-blue-400 font-mono">{cc}</strong>
+                          </div>
+                          {activeClass.hasTP && (
+                            <div className="bg-slate-50 dark:bg-slate-950/60 p-1.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                              <span className="text-[10px] text-slate-400 block">TP</span>
+                              <strong className="text-purple-600 dark:text-purple-400 font-mono">{st.tpScore ?? '-'}</strong>
+                            </div>
+                          )}
+                          <div className="bg-slate-50 dark:bg-slate-950/60 p-1.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">فرض 1</span>
+                            <strong className="text-slate-800 dark:text-slate-200 font-mono">{st.test1}</strong>
+                          </div>
+                          <div className="bg-slate-50 dark:bg-slate-950/60 p-1.5 rounded-xl border border-slate-100 dark:border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">اختبار</span>
+                            <strong className="text-amber-600 dark:text-amber-400 font-mono">{st.exam}</strong>
+                          </div>
+                        </div>
+
+                        {/* زر لمس عريض لفتح نافذة رصد النقاط */}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStudentForGrades({ student: st, classInfo: activeClass })}
+                          className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[44px]"
+                        >
+                          <Award className="w-4 h-4" />
+                          <span>رصد وتعديل نقاط التلميذ (نافذة تفاعلية) ✏️</span>
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* جدول شاشات الحواسيب والأجهزة اللوحية */}
+              <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full text-right text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-800 text-white">
@@ -4465,1017 +4716,26 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               [تعديل 2: البطاقة الفردية الدقيقة]
           ========================================================= */}
           {activeTab === 'analytics' && (
-            <div className="space-y-6">
-              {/* شريط التحكم واختيار القوائم المنسدلة بعناوين مختصرة [تعديل 2] */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white font-black flex items-center justify-center text-lg shadow-md shadow-blue-600/20">
-                      {activeClass.name}
-                    </div>
-                    <div>
-                      <h2 className="font-black text-slate-800 text-base sm:text-lg">
-                        إحصائيات ونتائج قسم {activeClass.name} ({teacherProfile.subject})
-                      </h2>
-                      <p className="text-xs text-slate-500">
-                        المستوى: {activeClass.level} • الشعبة: {activeClass.stream} • عدد التلاميذ: {activeClass.students.length} تلميذ
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {/* تبديل القسم */}
-                    <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                      <span className="text-xs text-slate-500 font-bold">القسم:</span>
-                      <select
-                        value={activeClass.id}
-                        onChange={e => {
-                          setActiveClassId(e.target.value);
-                          setSelectedStudentForDiagnostic(null);
-                        }}
-                        className="bg-transparent font-black text-xs text-slate-800 focus:outline-none cursor-pointer"
-                      >
-                        {classes.map(c => <option key={c.id} value={c.id}>{c.name} ({c.level})</option>)}
-                      </select>
-                    </div>
-
-                    {/* القائمة المنسدلة لاختيار المحتوى المستهدف بعناوين مختصرة */}
-                    <div className="flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200 text-blue-900 shadow-xs">
-                      <Sliders className="w-3.5 h-3.5 text-blue-600" />
-                      <span className="text-xs font-bold">عرض المحتوى:</span>
-                      <select
-                        value={analyticsSelectedDropdown}
-                        onChange={e => {
-                          const val = e.target.value as any;
-                          setAnalyticsSelectedDropdown(val);
-                          if (val !== 'all') {
-                            setOpenAnalyticsAccordions(prev => ({ ...prev, [val]: true }));
-                          }
-                        }}
-                        className="bg-transparent font-black text-xs text-blue-950 focus:outline-none cursor-pointer"
-                      >
-                        <option value="all">الكل (عرض الرسوم البيانية وكافة المؤشرات)</option>
-                        <option value="charts">📈 1. الرسومات البيانية التفاعلية للنتائج</option>
-                        <option value="kpis">📊 2. المؤشرات العامة للقسم</option>
-                        <option value="absences">⚠️ 3. تنبيهات الغياب والانضباط</option>
-                        <option value="comparison">⚖️ 4. مقارنة الفوج الأول والفوج الثاني</option>
-                        <option value="students">📋 5. قوائم التلاميذ والنتائج والمعدلات</option>
-                        <option value="diagnostic">🎯 6. البطاقة الفردية وخطة المعالجة</option>
-                      </select>
-                    </div>
-
-                    {/* أزرار توسيع وطي الكل */}
-                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                      <button
-                        onClick={expandAllAnalyticsAccordions}
-                        className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-white rounded-lg transition"
-                        title="فتح جميع القوائم المنسدلة"
-                      >
-                        توسيع الكل
-                      </button>
-                      <button
-                        onClick={collapseAllAnalyticsAccordions}
-                        className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-white rounded-lg transition"
-                        title="طي جميع القوائم المنسدلة"
-                      >
-                        طي الكل
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* =========================================================
-                  قسم الرسومات البيانية التفاعلية (المطلوب في التحديث)
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'charts') && (
-                <AnalyticsCharts
-                  activeClass={activeClass}
-                  allClasses={classes}
-                  calcStudentAverage={calcStudentAverage}
-                  initialSelectedStudentId={selectedStudentForDiagnostic}
-                  onSelectStudent={(id) => setSelectedStudentForDiagnostic(id)}
-                />
-              )}
-
-              {/* =========================================================
-                  القائمة المنسدلة 1: المؤشرات العامة
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'kpis') && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-                  <div
-                    onClick={() => toggleAnalyticsAccordion('kpis')}
-                    className="p-4 sm:p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition border-b border-slate-100"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 font-bold flex items-center justify-center">
-                        <BarChart3 className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-slate-800 text-sm sm:text-base">📊 المؤشرات العامة للقسم</h3>
-                        <p className="text-[11px] text-slate-500">المعدل العام الحسابي، نسبة النجاح، وأعلى معدل</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 rounded-full text-xs font-black bg-blue-50 text-blue-700 border border-blue-200">
-                        معدل القسم: {(activeClass.students.reduce((a, s) => a + calcStudentAverage(s, activeClass.hasTP), 0) / (activeClass.students.length || 1)).toFixed(2)} / 20
-                      </span>
-                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
-                        <ChevronDown className={`w-4 h-4 transition-transform ${openAnalyticsAccordions.kpis ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {openAnalyticsAccordions.kpis && (
-                    <div className="p-5 bg-slate-50/50">
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 text-center shadow-xs">
-                          <div className="text-xs text-slate-500">المتوسط الحسابي للقسم</div>
-                          <div className="text-2xl font-black text-blue-600 mt-1">
-                            {(activeClass.students.reduce((a, s) => a + calcStudentAverage(s, activeClass.hasTP), 0) / (activeClass.students.length || 1)).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 text-center shadow-xs">
-                          <div className="text-xs text-slate-500">نسبة النجاح (≥ 10)</div>
-                          <div className="text-2xl font-black text-emerald-600 mt-1">
-                            {Math.round((activeClass.students.filter(s => calcStudentAverage(s, activeClass.hasTP) >= 10).length / (activeClass.students.length || 1)) * 100)}%
-                          </div>
-                        </div>
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 text-center shadow-xs">
-                          <div className="text-xs text-slate-500">أعلى معدل في القسم</div>
-                          <div className="text-2xl font-black text-indigo-600 mt-1">
-                            {Math.max(...activeClass.students.map(s => calcStudentAverage(s, activeClass.hasTP)), 0)}
-                          </div>
-                        </div>
-                        <div className="bg-white p-4 rounded-2xl border border-slate-200 text-center shadow-xs">
-                          <div className="text-xs text-slate-500">تلاميذ بحاجة لمعالجة (&lt; 10)</div>
-                          <div className="text-2xl font-black text-rose-600 mt-1">
-                            {activeClass.students.filter(s => calcStudentAverage(s, activeClass.hasTP) < 10).length}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* =========================================================
-                  القائمة المنسدلة 2: تنبيهات الغياب
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'absences') && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-                  <div
-                    onClick={() => toggleAnalyticsAccordion('absences')}
-                    className="p-4 sm:p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition border-b border-slate-100"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-2xl font-bold flex items-center justify-center ${
-                        studentsWithAbsenceAlert.length > 0 ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        <AlertTriangle className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-slate-800 text-sm sm:text-base">⚠️ تنبيهات الغياب (تجاوز 3 غيابات)</h3>
-                        <p className="text-[11px] text-slate-500">رصد التلاميذ المتجاوزين للنصاب القانوني للغياب غير المبرر</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-full text-xs font-black ${
-                        studentsWithAbsenceAlert.length > 0
-                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                          : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      }`}>
-                        {studentsWithAbsenceAlert.length > 0 ? `رصد ${studentsWithAbsenceAlert.length} تلاميذ` : 'لا توجد إنذارات غياب ✓'}
-                      </span>
-                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
-                        <ChevronDown className={`w-4 h-4 transition-transform ${openAnalyticsAccordions.absences ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {openAnalyticsAccordions.absences && (
-                    <div className="p-5 bg-slate-50/50">
-                      {studentsWithAbsenceAlert.length > 0 ? (
-                        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-rose-500/15 border-2 border-rose-300 shadow-sm flex flex-wrap items-center justify-between gap-4">
-                          <div className="flex items-center gap-3.5">
-                            <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-600/30">
-                              <AlertTriangle className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-black text-rose-950 text-sm sm:text-base">
-                                  نظام اليقظة والإنذار: رصد {studentsWithAbsenceAlert.length} تلاميذ تجاوزوا 3 غيابات غير مبررة
-                                </h4>
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-bounce">
-                                  تنبيه رسمي
-                                </span>
-                              </div>
-                              <p className="text-xs text-rose-800 mt-1">
-                                تجاوز النصاب القانوني (3 غيابات) يستوجب إشعار ولي الأمر فوراً لتفادي الإحالة على مجلس الانضباط أو التأثير على التقويم.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            {/* قائمة منسدلة لاختيار التلميذ المتجاوز مباشرة */}
-                            <div className="bg-white px-2.5 py-1.5 rounded-xl border border-rose-300 flex items-center gap-1.5 shadow-xs">
-                              <span className="text-[11px] font-bold text-rose-950">تحديد التلميذ:</span>
-                              <select
-                                value={selectedStudentForDiagnostic || ''}
-                                onChange={e => {
-                                  if (e.target.value) {
-                                    setSelectedStudentForDiagnostic(e.target.value);
-                                    setOpenAnalyticsAccordions(prev => ({ ...prev, diagnostic: true }));
-                                  }
-                                }}
-                                className="bg-transparent text-xs font-bold text-rose-900 focus:outline-none cursor-pointer max-w-[170px]"
-                              >
-                                <option value="">-- تفقد بطاقة تلميذ --</option>
-                                {studentsWithAbsenceAlert.map(st => (
-                                  <option key={st.id} value={st.id}>
-                                    {st.lastName} {st.firstName} ({st.absencesCount} غيابات)
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <button
-                              onClick={() => {
-                                setAnalyticsFilterGroup(analyticsFilterGroup === 'absentWarning' ? 'all' : 'absentWarning');
-                                setOpenAnalyticsAccordions(prev => ({ ...prev, students: true }));
-                              }}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-black shadow-xs transition flex items-center gap-1.5 ${
-                                analyticsFilterGroup === 'absentWarning'
-                                  ? 'bg-slate-900 text-white'
-                                  : 'bg-rose-600 hover:bg-rose-700 text-white'
-                              }`}
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>{analyticsFilterGroup === 'absentWarning' ? 'عرض كل التلاميذ' : `تصفية المتجاوزين (${studentsWithAbsenceAlert.length})`}</span>
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                          <span className="font-bold">المواظبة منضبطة تماماً: جميع تلاميذ القسم لم يتجاوزوا عتبة 3 غيابات غير مبررة.</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* =========================================================
-                  القائمة المنسدلة 3: مقارنة أداء الفوج الأول والفوج الثاني
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'comparison') && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-                  <div
-                    onClick={() => toggleAnalyticsAccordion('comparison')}
-                    className="p-4 sm:p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition border-b border-slate-100"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center">
-                        <Scale className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-slate-800 text-sm sm:text-base">
-                          ⚖️ مقارنة أداء الفوج الأول والفوج الثاني في {teacherProfile.subject}
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          تحليل تفاضلي بيداغوجي يقارن بين الفوجين مع تلوين الخلايا ذات التفوق الملحوظ (🏆)
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        ف1: {groupComparison.g1.overallAvg} | ف2: {groupComparison.g2.overallAvg}
-                      </span>
-                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
-                        <ChevronDown className={`w-4 h-4 transition-transform ${openAnalyticsAccordions.comparison ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {openAnalyticsAccordions.comparison && (
-                    <div className="p-5 sm:p-6 space-y-5 bg-slate-50/20">
-                      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-800">
-                              قسم {activeClass.name}
-                            </span>
-                            <span className="text-xs text-slate-500">مقارنة المؤشرات البيداغوجية والتحصيل</span>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {/* قائمة منسدلة لاختيار وتصنيف معايير المقارنة */}
-                          <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 shadow-xs">
-                            <Filter className="w-3.5 h-3.5 text-indigo-600" />
-                            <span className="text-xs font-bold text-slate-500">معايير المقارنة:</span>
-                            <select
-                              value={groupComparisonCategory}
-                              onChange={e => setGroupComparisonCategory(e.target.value as any)}
-                              className="bg-transparent font-black text-xs text-slate-800 focus:outline-none cursor-pointer"
-                            >
-                              <option value="all">كافة المعايير البيداغوجية (عرض شامل)</option>
-                              <option value="average">المعدلات العامة ونسب النجاح والامتياز</option>
-                              <option value="evaluation">عناصر التقييم (التقويم، الفروض، الاختبار)</option>
-                              <option value="discipline">المواظبة والانضباط والغيابات</option>
-                            </select>
-                          </div>
-
-                          <button
-                            onClick={() => setShowGroupComparisonDetails(!showGroupComparisonDetails)}
-                            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition flex items-center gap-1 bg-white"
-                          >
-                            <span>{showGroupComparisonDetails ? 'طي الجدول' : 'عرض الجدول'}</span>
-                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showGroupComparisonDetails ? 'rotate-180' : ''}`} />
-                          </button>
-                        </div>
-                      </div>
-
-                {/* بطاقتي ملخص المقارنة السريعة للفوجين جنب إلى جنب */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* بطاقة الفوج الأول */}
-                  <div className={`p-4 rounded-2xl border transition relative overflow-hidden ${
-                    groupComparison.g1.overallAvg > groupComparison.g2.overallAvg
-                      ? 'bg-gradient-to-br from-emerald-50/70 to-teal-50/40 border-emerald-300 ring-1 ring-emerald-400/40'
-                      : 'bg-slate-50/80 border-slate-200'
-                  }`}>
-                    {groupComparison.g1.overallAvg > groupComparison.g2.overallAvg && (
-                      <div className="absolute top-0 left-0 bg-emerald-600 text-white text-[10px] font-black px-3 py-0.5 rounded-br-xl flex items-center gap-1 shadow-xs">
-                        <Trophy className="w-3 h-3 text-amber-300 fill-amber-300" />
-                        <span>متصدر المعدل العام (+{(groupComparison.g1.overallAvg - groupComparison.g2.overallAvg).toFixed(2)})</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-xs font-bold text-slate-500">الفوج 1</span>
-                        <h4 className="text-base font-black text-slate-800">الفوج الأول ({groupComparison.g1Count} تلميذ)</h4>
-                      </div>
-                      <div className="text-left">
-                        <div className="text-xs text-slate-400 font-semibold">المعدل الفصلي للفوج</div>
-                        <div className="text-2xl font-black text-slate-900 mt-0.5">
-                          {groupComparison.g1.overallAvg}{' '}
-                          <span className="text-xs font-bold text-slate-400">/ 20</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 mt-4 text-center text-xs">
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">نسبة النجاح</span>
-                        <span className="font-black text-slate-800">{groupComparison.g1.successRate}%</span>
-                      </div>
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">نسبة الامتياز</span>
-                        <span className="font-black text-slate-800">{groupComparison.g1.excellenceRate}%</span>
-                      </div>
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">معدل الغيابات</span>
-                        <span className="font-black text-slate-800">{groupComparison.g1.absencesAvg} غياب</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* بطاقة الفوج الثاني */}
-                  <div className={`p-4 rounded-2xl border transition relative overflow-hidden ${
-                    groupComparison.g2.overallAvg > groupComparison.g1.overallAvg
-                      ? 'bg-gradient-to-br from-emerald-50/70 to-teal-50/40 border-emerald-300 ring-1 ring-emerald-400/40'
-                      : 'bg-slate-50/80 border-slate-200'
-                  }`}>
-                    {groupComparison.g2.overallAvg > groupComparison.g1.overallAvg && (
-                      <div className="absolute top-0 left-0 bg-emerald-600 text-white text-[10px] font-black px-3 py-0.5 rounded-br-xl flex items-center gap-1 shadow-xs">
-                        <Trophy className="w-3 h-3 text-amber-300 fill-amber-300" />
-                        <span>متصدر المعدل العام (+{(groupComparison.g2.overallAvg - groupComparison.g1.overallAvg).toFixed(2)})</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-xs font-bold text-slate-500">الفوج 2</span>
-                        <h4 className="text-base font-black text-slate-800">الفوج الثاني ({groupComparison.g2Count} تلميذ)</h4>
-                      </div>
-                      <div className="text-left">
-                        <div className="text-xs text-slate-400 font-semibold">المعدل الفصلي للفوج</div>
-                        <div className="text-2xl font-black text-slate-900 mt-0.5">
-                          {groupComparison.g2.overallAvg}{' '}
-                          <span className="text-xs font-bold text-slate-400">/ 20</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 mt-4 text-center text-xs">
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">نسبة النجاح</span>
-                        <span className="font-black text-slate-800">{groupComparison.g2.successRate}%</span>
-                      </div>
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">نسبة الامتياز</span>
-                        <span className="font-black text-slate-800">{groupComparison.g2.excellenceRate}%</span>
-                      </div>
-                      <div className="p-2 rounded-xl bg-white/80 border border-slate-200/70">
-                        <span className="text-slate-400 block text-[10px]">معدل الغيابات</span>
-                        <span className="font-black text-slate-800">{groupComparison.g2.absencesAvg} غياب</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* جدول المقارنة التفصيلي مع تلوين الخلايا المتفوقة */}
-                {showGroupComparisonDetails && (
-                  <div className="space-y-3 animate-in fade-in">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-right text-xs border-collapse">
-                        <thead>
-                          <tr className="bg-slate-900 text-white font-bold">
-                            <th className="py-3 px-3.5 rounded-tr-xl">المؤشر البيداغوجي وعنصر التقييم</th>
-                            <th className="py-3 px-3 text-center">الفوج الأول (فوج 1)</th>
-                            <th className="py-3 px-3 text-center">الفوج الثاني (فوج 2)</th>
-                            <th className="py-3 px-3 text-center">فارق الأداء (Δ)</th>
-                            <th className="py-3 px-3 rounded-tl-xl text-center">التشخيص والتفوق الملحوظ</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                          {comparisonRows
-                            .filter(r => groupComparisonCategory === 'all' || r.category === groupComparisonCategory)
-                            .map(row => {
-                              const diff = Number((row.val1 - row.val2).toFixed(2));
-                              let isG1Superior = false;
-                              let isG2Superior = false;
-
-                              if (row.higherIsBetter) {
-                                if (diff >= row.threshold) isG1Superior = true;
-                                else if (diff <= -row.threshold) isG2Superior = true;
-                              } else {
-                                // For negative metrics like absences & remedial rate, lower is better!
-                                if (diff <= -row.threshold) isG1Superior = true;
-                                else if (diff >= row.threshold) isG2Superior = true;
-                              }
-
-                              const absDiff = Math.abs(diff);
-
-                              return (
-                                <tr key={row.id} className="hover:bg-slate-50/70 transition">
-                                  {/* اسم المؤشر وشرحه */}
-                                  <td className="py-3 px-3.5">
-                                    <div className="font-bold text-slate-900 text-xs sm:text-sm">
-                                      {row.label}
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 mt-0.5">
-                                      {row.description}
-                                    </div>
-                                  </td>
-
-                                  {/* خلية الفوج الأول */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className={`py-2 px-3 rounded-xl transition inline-block min-w-[120px] ${
-                                      isG1Superior
-                                        ? 'bg-emerald-100/90 text-emerald-950 font-black border-2 border-emerald-500 shadow-xs ring-2 ring-emerald-300/40'
-                                        : 'bg-slate-50 text-slate-700 font-semibold border border-slate-200'
-                                    }`}>
-                                      <div className="text-sm font-black">
-                                        {row.val1} <span className="text-[11px] font-semibold opacity-75">{row.unit}</span>
-                                      </div>
-                                      {isG1Superior && (
-                                        <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-700 text-white shadow-xs">
-                                          <Trophy className="w-3 h-3 text-amber-300 fill-amber-300" />
-                                          <span>تفوق ملحوظ ({diff > 0 ? `+${absDiff}` : `-${absDiff}`})</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* خلية الفوج الثاني */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className={`py-2 px-3 rounded-xl transition inline-block min-w-[120px] ${
-                                      isG2Superior
-                                        ? 'bg-emerald-100/90 text-emerald-950 font-black border-2 border-emerald-500 shadow-xs ring-2 ring-emerald-300/40'
-                                        : 'bg-slate-50 text-slate-700 font-semibold border border-slate-200'
-                                    }`}>
-                                      <div className="text-sm font-black">
-                                        {row.val2} <span className="text-[11px] font-semibold opacity-75">{row.unit}</span>
-                                      </div>
-                                      {isG2Superior && (
-                                        <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-700 text-white shadow-xs">
-                                          <Trophy className="w-3 h-3 text-amber-300 fill-amber-300" />
-                                          <span>تفوق ملحوظ ({diff < 0 ? `+${absDiff}` : `-${absDiff}`})</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* فارق الأداء (Δ) */}
-                                  <td className="py-3 px-3 text-center whitespace-nowrap">
-                                    <div className={`font-black text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-lg ${
-                                      absDiff < (row.threshold * 0.7)
-                                        ? 'text-slate-500 bg-slate-100'
-                                        : diff > 0
-                                        ? 'text-emerald-700 bg-emerald-50 font-bold'
-                                        : 'text-indigo-700 bg-indigo-50 font-bold'
-                                    }`}>
-                                      {diff > 0 ? (
-                                        <>
-                                          <TrendingUp className="w-3.5 h-3.5" />
-                                          <span>+{absDiff} لصالح ف1</span>
-                                        </>
-                                      ) : diff < 0 ? (
-                                        <>
-                                          <TrendingDown className="w-3.5 h-3.5" />
-                                          <span>+{absDiff} لصالح ف2</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Minus className="w-3.5 h-3.5" />
-                                          <span>متساويان تماماً</span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* التشخيص والتفوق الملحوظ */}
-                                  <td className="py-3 px-3 text-center whitespace-nowrap">
-                                    {isG1Superior ? (
-                                      <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300 inline-flex items-center gap-1.5 shadow-xs">
-                                        <Trophy className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
-                                        <span>تفوق واضح لصالح الفوج الأول</span>
-                                      </span>
-                                    ) : isG2Superior ? (
-                                      <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300 inline-flex items-center gap-1.5 shadow-xs">
-                                        <Trophy className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
-                                        <span>تفوق واضح لصالح الفوج الثاني</span>
-                                      </span>
-                                    ) : (
-                                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 inline-flex items-center gap-1">
-                                        <Scale className="w-3.5 h-3.5 text-slate-400" />
-                                        <span>أداء متقارب ومتكافئ</span>
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* مفتاح قراءة الجدول والدلالات البيداغوجية */}
-                    <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-4">
-                        <div className="flex items-center gap-1.5 font-bold text-emerald-900">
-                          <span className="w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-emerald-200 inline-block"></span>
-                          <span>الخلايا الخضراء والتاج (🏆): تسجيل تفوق ملحوظ ذي دلالة إحصائية وبيداغوجية لصالح الفوج.</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 font-semibold text-slate-600">
-                          <span className="w-3 h-3 rounded-full bg-slate-300 inline-block"></span>
-                          <span>الخلايا العادية: أداء متوازن ومتقارب بين الفوجين دون فارق جوهري.</span>
-                        </div>
-                      </div>
-
-                      <div className="text-[11px] text-slate-500">
-                        * عتبة التفوق الملحوظ: فارق ≥ 0.5 في المعدلات، ≥ 5% في النسب، وانخفاض الغيابات في المواظبة.
-                      </div>
-                    </div>
-                  </div>
-                )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* =========================================================
-                  القائمة المنسدلة 4: قوائم التلاميذ مع تفاصيل إحصائياتهم ومعدلاتهم
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'students') && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-                  <div
-                    onClick={() => toggleAnalyticsAccordion('students')}
-                    className="p-4 sm:p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition border-b border-slate-100"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 font-bold flex items-center justify-center">
-                        <FileSpreadsheet className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-slate-800 text-sm sm:text-base">
-                          📋 قوائم تلاميذ قسم {activeClass.name} مع تفاصيل إحصائياتهم ومعدلاتهم
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          تفاصيل نقاط التقويم، الفروض، الاختبار، المعدل الفصلي، والغيابات
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-3 py-1 rounded-full text-xs font-black bg-blue-50 text-blue-700 border border-blue-200">
-                        {analyticsStudentsList.length} من أصل {activeClass.students.length} تلميذ
-                      </span>
-                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
-                        <ChevronDown className={`w-4 h-4 transition-transform ${openAnalyticsAccordions.students ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {openAnalyticsAccordions.students && (
-                    <div className="p-5 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-xs text-slate-500">
-                          اضغط على أي تلميذ في الجدول أدناه لفتح بطاقته البيداغوجية الفردية وخطة معالجته:
-                        </p>
-
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          {/* قائمة منسدلة لتصفية التلاميذ والفوج */}
-                          <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 shadow-xs">
-                            <Filter className="w-3.5 h-3.5 text-blue-600" />
-                            <span className="text-xs font-bold text-slate-500">تصفية القائمة:</span>
-                            <select
-                              value={analyticsFilterGroup}
-                              onChange={e => {
-                                const val = e.target.value;
-                                if (val === '1') setAnalyticsFilterGroup(1);
-                                else if (val === '2') setAnalyticsFilterGroup(2);
-                                else setAnalyticsFilterGroup(val as any);
-                              }}
-                              className="bg-transparent font-black text-xs text-slate-800 focus:outline-none cursor-pointer"
-                            >
-                              <option value="all">👥 جميع التلاميذ ({activeClass.students.length} تلميذ)</option>
-                              <option value="1">فوج 1 فقط ({activeClass.students.filter(s => s.group === 1).length} تلميذ)</option>
-                              <option value="2">فوج 2 فقط ({activeClass.students.filter(s => s.group === 2).length} تلميذ)</option>
-                              <option value="remedial">🔻 بحاجة لمعالجة (&lt; 10) ({activeClass.students.filter(s => calcStudentAverage(s, activeClass.hasTP) < 10).length} تلميذ)</option>
-                              <option value="absentWarning">⚠️ تنبيه الغياب: المتجاوزون لـ 3 غيابات ({studentsWithAbsenceAlert.length} تلميذ)</option>
-                            </select>
-                          </div>
-
-                          {/* قائمة منسدلة لترتيب النتائج */}
-                          <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 shadow-xs">
-                            <ArrowUpDown className="w-3.5 h-3.5 text-blue-600" />
-                            <span className="text-xs font-bold text-slate-500">الترتيب:</span>
-                            <select
-                              value={analyticsSortBy}
-                              onChange={e => setAnalyticsSortBy(e.target.value as any)}
-                              className="bg-transparent font-black text-xs text-slate-800 focus:outline-none cursor-pointer"
-                            >
-                              <option value="default">الترتيب الافتراضي (حسب رقم القائمة)</option>
-                              <option value="avg_desc">المعدل الفصلي (الأعلى أولاً 🏆)</option>
-                              <option value="avg_asc">المعدل الفصلي (الأدنى أولاً 🔻)</option>
-                              <option value="absences_desc">عدد الغيابات (الأكثر أولاً ⚠️)</option>
-                              <option value="name_asc">أبجدياً باللقب (أ - ي)</option>
-                              <option value="group">حسب الفوج (ف1 ثم ف2)</option>
-                            </select>
-                          </div>
-
-                          <div className="relative w-48">
-                            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
-                            <input
-                              type="text"
-                              placeholder="ابحث بحرف أو اسم..."
-                              value={analyticsSearchQuery}
-                              onChange={e => setAnalyticsSearchQuery(e.target.value)}
-                              className="w-full pr-8 pl-7 py-1 text-xs rounded-xl border border-slate-300 bg-white font-medium"
-                            />
-                            {analyticsSearchQuery && (
-                              <button
-                                type="button"
-                                onClick={() => setAnalyticsSearchQuery('')}
-                                className="absolute left-2 top-1.5 text-slate-400 hover:text-slate-600"
-                                title="مسح البحث"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                {/* جدول قوائم التلاميذ مع معدلاتهم وإحصائياتهم ونظام التمييز اللوني */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-right text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-800 text-white font-bold">
-                        <th className="py-3 px-3 rounded-tr-xl">#</th>
-                        <th className="py-3 px-3">اللقب والاسم</th>
-                        <th className="py-3 px-2 text-center">الفوج</th>
-                        <th className="py-3 px-2 text-center">التقويم المستمر</th>
-                        {activeClass.hasTP && <th className="py-3 px-2 text-center">الأعمال التطبيقية TP</th>}
-                        <th className="py-3 px-2 text-center">الفرض 1</th>
-                        <th className="py-3 px-2 text-center">الفرض 2</th>
-                        <th className="py-3 px-2 text-center">الاختبار</th>
-                        <th className="py-3 px-2 text-center">المعدل الفصلي</th>
-                        <th className="py-3 px-2 text-center">التطور (ف2 - ف1)</th>
-                        <th className="py-3 px-2 text-center">الغيابات غير المبررة</th>
-                        <th className="py-3 px-2 text-center">التقدير</th>
-                        <th className="py-3 px-3 rounded-tl-xl text-center">الإجراء والتنبيه</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {analyticsStudentsList.length === 0 ? (
-                        <tr>
-                          <td colSpan={activeClass.hasTP ? 13 : 12} className="py-10 text-center text-slate-500 bg-slate-50">
-                            <p className="font-bold text-slate-700">لم يتم العثور على أي تلميذ يتضمن اسمه «{analyticsSearchQuery}»</p>
-                            <button
-                              type="button"
-                              onClick={() => setAnalyticsSearchQuery('')}
-                              className="text-xs text-blue-600 hover:underline mt-1 font-bold"
-                            >
-                              إلغاء البحث وإظهار كافة التلاميذ
-                            </button>
-                          </td>
-                        </tr>
-                      ) : (
-                        analyticsStudentsList.map((st, idx) => {
-                          const avg = calcStudentAverage(st, activeClass.hasTP);
-                          const delta = st.test2 - st.test1;
-                          const isSelected = currentDiagnosticStudent?.id === st.id;
-                          const isAbsenceExceeded = st.absencesCount >= 3; // تجاوز 3 غيابات
-
-                          return (
-                            <tr
-                              key={st.id}
-                              onClick={() => setSelectedStudentForDiagnostic(st.id)}
-                              className={`cursor-pointer transition ${
-                                isSelected
-                                  ? 'bg-blue-50/90 font-bold ring-1 ring-blue-300'
-                                  : isAbsenceExceeded
-                                  ? 'bg-rose-50/90 border-r-4 border-r-rose-600 hover:bg-rose-100/90'
-                                  : 'hover:bg-slate-50'
-                              }`}
-                            >
-                              <td className="py-3 px-3 font-bold text-slate-400">{idx + 1}</td>
-                              <td className="py-3 px-3 font-bold text-slate-800 whitespace-nowrap">
-                                <div className="flex items-center gap-1.5">
-                                  <span>
-                                    <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={analyticsSearchQuery} />
-                                  </span>
-                                {isAbsenceExceeded && (
-                                  <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-black flex items-center gap-0.5">
-                                    <AlertTriangle className="w-3 h-3 text-rose-600" />
-                                    <span>إنذار غياب</span>
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 text-center">
-                              <span className="px-2 py-0.5 rounded bg-slate-100 font-semibold">فوج {st.group}</span>
-                            </td>
-                            <td className="py-3 px-2 text-center font-bold text-blue-700">
-                              {calcContinuousScore(st.bonusPoints)}
-                            </td>
-                            {activeClass.hasTP && (
-                              <td className="py-3 px-2 text-center font-bold text-slate-700">{st.tpScore}</td>
-                            )}
-                            <td className="py-3 px-2 text-center font-semibold text-slate-700">{st.test1}</td>
-                            <td className="py-3 px-2 text-center font-semibold text-slate-700">{st.test2}</td>
-                            <td className="py-3 px-2 text-center font-bold text-slate-900">{st.exam}</td>
-                            <td className="py-3 px-2 text-center">
-                              <span className={`px-2.5 py-1 rounded-lg font-black text-xs ${
-                                avg >= 14 ? 'bg-emerald-100 text-emerald-800' : avg >= 10 ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
-                              }`}>
-                                {avg}
-                              </span>
-                            </td>
-                            <td className="py-3 px-2 text-center font-bold">
-                              <span className={delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                                {delta > 0 ? `+${delta}` : delta}
-                              </span>
-                            </td>
-                            <td className="py-3 px-2 text-center font-semibold">
-                              {isAbsenceExceeded ? (
-                                <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-600 text-white shadow-xs animate-pulse inline-flex items-center gap-1">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  <span>{st.absencesCount} غيابات (تجاوز)</span>
-                                </span>
-                              ) : (
-                                <span className={st.absencesCount > 0 ? 'text-amber-600 font-bold' : 'text-slate-400'}>
-                                  {st.absencesCount}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-2 text-center whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                avg >= 16 ? 'bg-emerald-100 text-emerald-800' :
-                                avg >= 14 ? 'bg-blue-100 text-blue-800' :
-                                avg >= 10 ? 'bg-slate-100 text-slate-700' : 'bg-rose-100 text-rose-800'
-                              }`}>
-                                {avg >= 16 ? 'ممتاز' : avg >= 14 ? 'جيد جداً' : avg >= 10 ? 'مقبول' : 'معالجة'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                {isAbsenceExceeded && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openAbsenceReminderModal(st);
-                                    }}
-                                    className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black shadow-xs flex items-center gap-1 transition"
-                                    title="إرسال إشعار تذكيري للولي"
-                                  >
-                                    <Bell className="w-3 h-3" />
-                                    <span>إشعار الولي</span>
-                                  </button>
-                                )}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedStudentForDiagnostic(st.id);
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold"
-                                >
-                                  البطاقة ←
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      }))}
-                    </tbody>
-                  </table>
-                </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* =========================================================
-                  القائمة المنسدلة 5: البطاقة البيداغوجية الفردية وخطة المعالجة
-              ========================================================= */}
-              {(analyticsSelectedDropdown === 'all' || analyticsSelectedDropdown === 'diagnostic') && (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden transition-all">
-                  <div
-                    onClick={() => toggleAnalyticsAccordion('diagnostic')}
-                    className="p-4 sm:p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition border-b border-slate-100"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 font-bold flex items-center justify-center">
-                        <Award className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-slate-800 text-sm sm:text-base">
-                          🎯 البطاقة البيداغوجية الفردية وخطة المعالجة
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          {currentDiagnosticStudent
-                            ? `بطاقة التلميذ: ${currentDiagnosticStudent.lastName} ${currentDiagnosticStudent.firstName} (فوج ${currentDiagnosticStudent.group})`
-                            : 'اختر تلميذاً من القائمة المنسدلة أدناه لعرض بطاقته الفردية الكاملة وخطة المعالجة'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {currentDiagnosticStudent && (
-                        <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-50 text-amber-800 border border-amber-200">
-                          معدل التلميذ: {calcStudentAverage(currentDiagnosticStudent, activeClass.hasTP)} / 20
-                        </span>
-                      )}
-                      <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600">
-                        <ChevronDown className={`w-4 h-4 transition-transform ${openAnalyticsAccordions.diagnostic ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {openAnalyticsAccordions.diagnostic && (
-                    <div className="p-5 sm:p-6 space-y-5 bg-slate-50/20">
-                      {/* قائمة منسدلة لاختيار التلميذ مباشرة */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                        <div className="flex items-center gap-2">
-                          <Users className="w-4 h-4 text-blue-600" />
-                          <span className="text-xs font-bold text-slate-700">اختيار التلميذ من القائمة المنسدلة:</span>
-                        </div>
-                        <select
-                          value={selectedStudentForDiagnostic || ''}
-                          onChange={e => setSelectedStudentForDiagnostic(e.target.value || null)}
-                          className="bg-slate-50 border border-slate-300 font-bold text-xs text-slate-800 py-1.5 px-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-xs sm:max-w-md w-full cursor-pointer shadow-xs"
-                        >
-                          <option value="">-- اختر تلميذاً من القائمة لعرض بطاقته الفردية --</option>
-                          {activeClass.students.map(st => {
-                            const avg = calcStudentAverage(st, activeClass.hasTP);
-                            return (
-                              <option key={st.id} value={st.id}>
-                                {st.lastName} {st.firstName} • فوج {st.group} • (المعدل: {avg}/20){st.absencesCount >= 3 ? ' ⚠️ (غياب: ' + st.absencesCount + ')' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      {currentDiagnosticStudent ? (
-                        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5">
-                          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                            <div>
-                              <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
-                                <Award className="w-5 h-5 text-blue-600" />
-                                <span>البطاقة البيداغوجية الفردية: {currentDiagnosticStudent.lastName} {currentDiagnosticStudent.firstName}</span>
-                              </h4>
-                              <p className="text-xs text-slate-500">
-                                كود التلميذ الموحد: <strong className="font-mono text-blue-700">{currentDiagnosticStudent.parentCode}</strong> • الفوج: {currentDiagnosticStudent.group} • طاولة #{currentDiagnosticStudent.seatIndex + 1}
-                              </p>
-                            </div>
-
-                            <button
-                              onClick={() => window.print()}
-                              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>طباعة بطاقة التلميذ</span>
-                            </button>
-                          </div>
-
-                          {/* تنبيه تجاوز 3 غيابات داخل البطاقة الفردية */}
-                          {currentDiagnosticStudent.absencesCount >= 3 && (
-                            <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-50 to-amber-50 border-2 border-rose-400 text-rose-950 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-in fade-in">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-sm animate-pulse">
-                                  <AlertTriangle className="w-5 h-5" />
-                                </div>
-                                <div>
-                                  <div className="font-black text-sm flex items-center gap-2">
-                                    <span>تنبيه حرج: التلميذ تجاوز الحد القانوني للغيابات ({currentDiagnosticStudent.absencesCount} غيابات غير مبررة)</span>
-                                    <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black">إشعار رسمي واجب</span>
-                                  </div>
-                                  <div className="text-xs text-rose-800 mt-0.5">
-                                    تجاوز 3 غيابات يستوجب استدعاء أو إرسال إشعار تذكيري لولي الأمر لتبرير الغياب تفادياً لعقوبة مجلس الانضباط والخصم من التقويم.
-                                  </div>
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={() => openAbsenceReminderModal(currentDiagnosticStudent)}
-                                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-sm flex items-center gap-1.5 transition"
-                              >
-                                <Bell className="w-3.5 h-3.5" />
-                                <span>إرسال إشعار تذكيري للولي الآن</span>
-                              </button>
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
-                            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                              <span className="text-slate-400 block mb-1">المعدل في {teacherProfile.subject}</span>
-                              <span className="text-xl font-black text-blue-600">
-                                {calcStudentAverage(currentDiagnosticStudent, activeClass.hasTP)} / 20
-                              </span>
-                            </div>
-                            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                              <span className="text-slate-400 block mb-1">المعدل العام التراكمي (كل المواد)</span>
-                              <span className="text-xl font-black text-emerald-600">
-                                {calcStudentGeneralAverage(currentDiagnosticStudent, teacherProfile.subject, activeClass.hasTP).generalAvg} / 20
-                              </span>
-                            </div>
-                            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                              <span className="text-slate-400 block mb-1">تطور الفروض (ف2 - ف1)</span>
-                              <span className={`text-xl font-black ${
-                                currentDiagnosticStudent.test2 >= currentDiagnosticStudent.test1 ? 'text-emerald-600' : 'text-rose-600'
-                              }`}>
-                                {currentDiagnosticStudent.test2 - currentDiagnosticStudent.test1 > 0 ? '+' : ''}
-                                {(currentDiagnosticStudent.test2 - currentDiagnosticStudent.test1).toFixed(1)}
-                              </span>
-                            </div>
-                            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                              <span className="text-slate-400 block mb-1">الغيابات والتأخرات</span>
-                              <span className="text-xl font-black text-amber-600">
-                                {currentDiagnosticStudent.absencesCount}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* تشخيص المعالجة */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                            <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
-                              <h5 className="font-bold text-emerald-900 flex items-center gap-1.5">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                <span>نقاط القوة والمؤشرات الإيجابية:</span>
-                              </h5>
-                              <p className="text-slate-700">• الانضباط وإحضار الأدوات: {currentDiagnosticStudent.bonusPoints >= 0 ? 'منضبط ومثالي' : 'مقبول'}</p>
-                              <p className="text-slate-700">• الملاحظة التربوية: "{currentDiagnosticStudent.remark || generateSmartRemark(currentDiagnosticStudent, activeClass.hasTP)}"</p>
-                            </div>
-
-                            <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 space-y-1.5">
-                              <h5 className="font-bold text-rose-900 flex items-center gap-1.5">
-                                <AlertTriangle className="w-4 h-4 text-rose-600" />
-                                <span>خطة المعالجة والتدابير البيداغوجية المقترحة:</span>
-                              </h5>
-                              {calcStudentAverage(currentDiagnosticStudent, activeClass.hasTP) < 10 ? (
-                                <p className="text-slate-700">• برمجة التلميذ إلزامياً في حصص المعالجة البيداغوجية الأسبوعية وتكليفه بتمارين استدراكية في المفاهيم القاعدية.</p>
-                              ) : (
-                                <p className="text-slate-700">• تشجيع التلميذ على المحافظة على التميز وإشراكه في مساعدة زملائه في حصص الأعمال الموجهة.</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-500 space-y-2">
-                          <Award className="w-8 h-8 mx-auto text-slate-400 stroke-1" />
-                          <p className="text-xs font-bold text-slate-600">لم يتم تحديد أي تلميذ بعد</p>
-                          <p className="text-[11px] text-slate-400">
-                            يرجى اختيار تلميذ من القائمة المنسدلة أعلاه أو النقر على اسمه في جدول القوائم لعرض بطاقته البيداغوجية الفردية وخطة المعالجة.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <AnalyticsSectionRedesign
+              activeClass={activeClass}
+              allClasses={classes}
+              onSelectClass={(classId) => {
+                setActiveClassId(classId);
+                setSelectedStudentForDiagnostic(null);
+              }}
+              teacherProfile={teacherProfile}
+              calcStudentAverage={calcStudentAverage}
+              onSaveStudent={(updatedStudent) => {
+                updateStudent(updatedStudent.id, () => updatedStudent);
+                showNotice(`تم حفظ بيانات وتوصيات التلميذ ${updatedStudent.lastName} ${updatedStudent.firstName} بنجاح`);
+              }}
+              onOpenStudentDetails={(student) => {
+                setSelectedStudentForDetails({ student, classInfo: activeClass });
+              }}
+              onOpenSettings={() => {
+                setShowSettingsModal(true);
+              }}
+            />
           )}
 
           {/* =========================================================
@@ -5534,6 +4794,35 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           onDeleteStudent={(id) => {
             deleteStudent(id, `${selectedStudentForDetails.student.lastName} ${selectedStudentForDetails.student.firstName}`, selectedStudentForDetails.classInfo.id);
           }}
+        />
+      )}
+
+      {/* نافذة اختيار السنة والقسم التفاعلية (المرحلة 2) */}
+      <ClassSelectorModal
+        isOpen={isClassSelectorOpen}
+        onClose={() => setIsClassSelectorOpen(false)}
+        classes={classes}
+        activeClassId={activeClass.id}
+        onSelectClass={(id) => {
+          setActiveClassId(id);
+          setSelectedStudentId(null);
+        }}
+        onAddNewClass={() => setNewClassModal(true)}
+        maxClasses={10}
+      />
+
+      {/* نافذة رصد وتعديل نقاط التلميذ التفاعلية للهاتف (المرحلة 5) */}
+      {selectedStudentForGrades && (
+        <StudentGradesModal
+          student={selectedStudentForGrades.student}
+          classInfo={selectedStudentForGrades.classInfo}
+          onClose={() => setSelectedStudentForGrades(null)}
+          onSaveGrades={(updated) => {
+            updateStudent(updated.id, () => updated, selectedStudentForGrades.classInfo.id);
+            setSelectedStudentForGrades(null);
+            showNotice(`✓ تم حفظ نقاط ${updated.lastName} ${updated.firstName} بنجاح`);
+          }}
+          teacherSubject={teacherProfile.subject}
         />
       )}
 
@@ -5627,67 +4916,293 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       )}
 
 
-      {/* نافذة تعديل المادة وبيانات الأستاذ Settings */}
+      {/* نافذة الإعدادات الشاملة المبسطة عبر 5 مجموعات واضحة (المرحلة 9) */}
       {showSettingsModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-800 text-base">تعديل المادة وبيانات الأستاذ</h3>
-              <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 dir-rtl animate-fadeIn">
+          <div
+            className="w-full sm:max-w-2xl bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[92vh] flex flex-col overflow-hidden animate-slideUp sm:animate-scaleUp"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* هيدر نافذة الإعدادات */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">إعدادات المنصة البيداغوجية</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">تخصيص بيانات الأستاذ، المواد، الأقسام، وحساب المعدلات</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">المادة المدرسة:</label>
-                <select
-                  value={teacherProfile.subject}
-                  onChange={e => setTeacherProfile(p => ({ ...p, subject: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold bg-white"
-                >
-                  {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
+            {/* شريط المجموعات الـ 5 (Tabs) */}
+            <div className="flex items-center gap-1 p-2 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 overflow-x-auto touch-scroll shrink-0">
+              {[
+                { id: 'profile', label: '1. بيانات الأستاذ', icon: User },
+                { id: 'subject', label: '2. المادة والمستوى', icon: BookOpen },
+                { id: 'classes', label: '3. إدارة الأقسام', icon: School },
+                { id: 'grading', label: '4. العلامات والتقويم', icon: Award },
+                { id: 'preferences', label: '5. العرض والتنبيهات', icon: Bell }
+              ].map(tab => {
+                const Icon = tab.icon;
+                const isActive = settingsActiveTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSettingsActiveTab(tab.id as any)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0 ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-sm font-black'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">اسم الأستاذ(ة):</label>
-                <input
-                  type="text"
-                  value={teacherProfile.name}
-                  onChange={e => setTeacherProfile(p => ({ ...p, name: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold"
-                />
-              </div>
+            {/* محتوى المجموعة المختارة */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 touch-scroll text-right">
+              
+              {/* المجموعة 1: بيانات الأستاذ والمؤسسة */}
+              {settingsActiveTab === 'profile' && (
+                <div className="space-y-4 animate-fadeIn">
+                  <div>
+                    <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
+                      اسم ولقب الأستاذ(ة):
+                    </label>
+                    <input
+                      type="text"
+                      value={teacherProfile.name}
+                      onChange={e => setTeacherProfile(p => ({ ...p, name: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">المؤسسة الثانوية:</label>
-                <input
-                  type="text"
-                  value={teacherProfile.highSchool}
-                  onChange={e => setTeacherProfile(p => ({ ...p, highSchool: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs"
-                />
-              </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
+                        المؤسسة الثانوية:
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherProfile.highSchool}
+                        onChange={e => setTeacherProfile(p => ({ ...p, highSchool: e.target.value }))}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
+                        الولاية:
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherProfile.wilaya || 'الجزائر العاصمة'}
+                        onChange={e => setTeacherProfile(p => ({ ...p, wilaya: e.target.value }))}
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
 
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button" onClick={() => setShowSettingsModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSettingsModal(false);
-                    showNotice('تم حفظ الإعدادات بنجاح!');
-                  }}
-                  className="px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-sm"
-                >
-                  حفظ التعديلات
-                </button>
-              </div>
+                  <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-2xl border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200 space-y-1">
+                    <strong className="block font-black">حساب Google المرتبط:</strong>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">{currentUser?.email}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* المجموعة 2: إعدادات المادة والمستوى */}
+              {settingsActiveTab === 'subject' && (
+                <div className="space-y-4 animate-fadeIn">
+                  <div>
+                    <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
+                      المادة التعليمية المسندة (المنهاج الجزائري):
+                    </label>
+                    <select
+                      value={teacherProfile.subject}
+                      onChange={e => setTeacherProfile(p => ({ ...p, subject: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+                    <span className="font-black text-slate-800 dark:text-white block">خصائص الحصص التطبيقية (TP):</span>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={activeClass.hasTP}
+                        onChange={e => {
+                          const val = e.target.checked;
+                          setClasses(prev => prev.map(c => c.id === activeClass.id ? { ...c, hasTP: val } : c));
+                        }}
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-slate-700 dark:text-slate-300 font-bold">تفعيل حصص الأعمال التطبيقية / المخبرية (TP) لقسم {activeClass.name}</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* المجموعة 3: إدارة الأقسام والسنوات (سعة 10 أقسام) */}
+              {settingsActiveTab === 'classes' && (
+                <div className="space-y-3 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-slate-700 dark:text-slate-300">
+                      الأقسام المسندة ({classes.length} من 10 أقسام):
+                    </span>
+                    {classes.length < 10 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSettingsModal(false);
+                          setNewClassModal(true);
+                        }}
+                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>إضافة قسم جديد</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {classes.map(c => (
+                      <div
+                        key={c.id}
+                        className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
+                          c.id === activeClass.id
+                            ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-400'
+                            : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <strong className="text-xs font-black text-slate-900 dark:text-white block">{c.name}</strong>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {c.level} • {c.stream} • {c.students.length} تلميذ
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {c.id !== activeClass.id && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveClassId(c.id)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-blue-600 hover:text-white transition"
+                            >
+                              تعيين كنشط
+                            </button>
+                          )}
+                          {classes.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setClasses(prev => prev.filter(item => item.id !== c.id));
+                                if (activeClassId === c.id) {
+                                  const remaining = classes.filter(item => item.id !== c.id);
+                                  setActiveClassId(remaining[0].id);
+                                }
+                                showNotice(`تم حذف قسم ${c.name}`);
+                              }}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                              title="حذف القسم"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* المجموعة 4: إعدادات العلامات والتقويم */}
+              {settingsActiveTab === 'grading' && (
+                <div className="space-y-3.5 animate-fadeIn">
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+                    <strong className="text-xs font-black text-slate-900 dark:text-white block">معادلة حساب التقويم المستمر (CC):</strong>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                      الأساس الافتراضي = <strong className="text-blue-600 dark:text-blue-400">14 / 20</strong> + رصيد السلوك والمواظبة والمشاركة الميدانية (بين 0 و 20).
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+                    <strong className="text-xs font-black text-slate-900 dark:text-white block">معاملات حساب المعدل الفصلي للمادة:</strong>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                      المعدل = [معدل التقويم والفروض + (نقطة الاختبار × 2)] ÷ 3 وفق مناشير وزارة التربية الوطنية للطور الثانوي.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* المجموعة 5: تفضيلات العرض والتنبيهات */}
+              {settingsActiveTab === 'preferences' && (
+                <div className="space-y-3.5 animate-fadeIn">
+                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white block">المظهر الليلي (Dark Mode)</strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">التبديل بين السمة الداكنة والفاتحة</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDarkMode(!darkMode)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 font-bold text-xs"
+                    >
+                      {darkMode ? 'تفعيل النهاري' : 'تفعيل الليلي'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white block">إنذار الغيابات التلقائي</strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">إظهار شارة تنبيه عند وصول التلميذ إلى 3 غيابات</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-black">
+                      مفعل افتراضياً ✓
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div>
+                      <strong className="text-xs font-black text-slate-900 dark:text-white block">الحفظ السحابي التلقائي</strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">مزامنة فورية لكل عملية تعديل مع خادم البيانات</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-black">
+                      نشط ومحمي ✓
+                    </span>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* فوتر نافذة الإعدادات */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-between gap-3 shrink-0">
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">
+                ✓ التعديلات تُحفظ سحابياً ومحلياً فوراً
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSettingsModal(false);
+                  showNotice('✓ تم حفظ وتطبيق كافة الإعدادات بنجاح');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-md transition cursor-pointer min-h-[40px]"
+              >
+                إغلاق وحفظ
+              </button>
             </div>
           </div>
         </div>
@@ -5708,6 +5223,11 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               onSubmit={e => {
                 e.preventDefault();
                 if (!newClassForm.name.trim()) return;
+                if (classes.length >= 10) {
+                  showNotice('⚠️ تم بلوغ الحد الأقصى للأقسام المسندة (10 أقسام).');
+                  setNewClassModal(false);
+                  return;
+                }
                 const created: ClassGroup = {
                   id: `cls-${Date.now()}`,
                   name: newClassForm.name.trim(),

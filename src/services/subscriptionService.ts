@@ -494,11 +494,21 @@ export function isCallerAuthorized(email?: string): boolean {
 export async function activateTeacherSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
+  planId: SubscriptionPlanId = 'lifetime',
   options?: {
     adminNotes?: string;
+    customDays?: number;
+    customPriceDZD?: number;
   }
 ): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
   if (!isCallerAuthorized(currentCallerEmail)) {
+    await recordAdminAuditLog({
+      actionType: 'activate',
+      adminEmail: currentCallerEmail,
+      targetTeacherEmail,
+      details: 'محاولة غير مصرح بها لتفعيل حساب أستاذ',
+      result: 'failure'
+    });
     return {
       success: false,
       message: 'عملية غير مصرح بها. تتطلب صلاحيات المشرف djazild@gmail.com'
@@ -513,42 +523,90 @@ export async function activateTeacherSubscription(
   const now = new Date();
   const existing = all[targetClean];
 
+  const isLifetime = planId === 'lifetime';
+  let expiresAt: string | null = null;
+  if (!isLifetime) {
+    const days = options?.customDays || (planId === '1month' ? 30 : planId === '1year' ? 365 : 180);
+    expiresAt = new Date(now.getTime() + days * 86400000).toISOString();
+  }
+
   const updated: TeacherSubscription = {
     teacherEmail: targetClean,
     teacherName: existing?.teacherName || targetClean.split('@')[0],
     phoneNumber: existing?.phoneNumber || '',
-    planId: 'lifetime',
+    planId: planId || 'lifetime',
     status: 'active',
-    amountDZD: existing?.amountDZD || 5000,
+    amountDZD: options?.customPriceDZD !== undefined ? options.customPriceDZD : (existing?.amountDZD || (isLifetime ? 5000 : 3000)),
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || now.toISOString(),
     activatedAt: now.toISOString(),
-    expiresAt: null,
+    expiresAt,
     activatedByAdminEmail: ADMIN_EMAIL,
     adminNotes: options?.adminNotes || 'حسابك مفعّل. يمكنك الدخول إلى الدفتر.',
-    isLifetime: true
+    isLifetime
   };
 
   all[targetClean] = updated;
   saveAllSubscriptions(all);
   await saveSubscriptionToFirestore(updated);
 
-  fetch('/api/subscriptions/activate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      currentCallerEmail: ADMIN_EMAIL,
-      targetTeacherEmail: targetClean,
-      planId: 'lifetime',
-      options
-    })
-  }).catch(e => console.warn('Background sync activate failed:', e));
+  try {
+    const res = await fetch('/api/subscriptions/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        currentCallerEmail: ADMIN_EMAIL,
+        targetTeacherEmail: targetClean,
+        planId,
+        options
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.subscription) {
+      all[targetClean] = data.subscription;
+      saveAllSubscriptions(all);
+    }
+  } catch (e) {
+    console.warn('Server sync activate error:', e);
+  }
+
+  await recordAdminAuditLog({
+    actionType: 'activate',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: `تم تفعيل الاشتراك بنجاح (${isLifetime ? 'مدى الحياة' : planId})`,
+    result: 'success'
+  });
 
   return {
     success: true,
-    message: `حسابك مفعّل. تم تفعيل حساب الأستاذ (${targetClean}) مدى الحياة بنجاح.`,
+    message: `حسابك مفعّل. تم تفعيل حساب الأستاذ (${targetClean}) بنجاح.`,
     subscription: updated
   };
+}
+
+export async function syncTeacherDataToServer(email: string, data: any): Promise<boolean> {
+  try {
+    const res = await fetch('/api/teacher/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teacherEmail: email, data })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadTeacherDataFromServer(email: string): Promise<any | null> {
+  try {
+    const res = await fetch(`/api/teacher/load/${encodeURIComponent(email)}`);
+    if (res.ok) {
+      const json = await res.json();
+      return json.data || null;
+    }
+  } catch {}
+  return null;
 }
 
 /**

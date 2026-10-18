@@ -1,6 +1,6 @@
 {
-  "summary": "خطة معمارية تفصيلية لتشريح وإصلاح السبب الجذري لخلل حذف اشتراكات الأساتذة، وفصل العمليات الأربع (إلغاء الاشتراك، الإيقاف، مسح الملف، والحذف النهائي)، وفك حظر الحسابات المتضررة، وعزل نافذة البحث في طبقة علوية مع خلفية معتمة.",
-  "updatedAt": "2026-10-18T08:43:19.383512435Z",
+  "summary": "Implementation plan for complete mobile-first redesign of the Analysis, Statistics & Comparison section ('تحليل القسم') in the Smart Notebook applet. Includes single-subject analytics, 4 KPI cards, live student search, dedicated mobile modal dialogs, follow-up management, and evaluation comparison tool.",
+  "updatedAt": "2026-10-18T12:44:14.330396437Z",
   "requestFeedback": true,
   "userFacing": true
 }

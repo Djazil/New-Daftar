@@ -35,6 +35,7 @@ export default function StudentDetailsModal({
   const [strengths, setStrengths] = useState(student.strengths || '');
   const [areasForImprovement, setAreasForImprovement] = useState(student.areasForImprovement || '');
   const [remark, setRemark] = useState(student.remark || '');
+  const [privateTeacherNotes, setPrivateTeacherNotes] = useState(student.privateTeacherNotes || '');
 
   const avg = calcAverage(student, classInfo.hasTP);
   const cc = Math.max(0, Math.min(20, 10 + student.bonusPoints));
@@ -49,6 +50,7 @@ export default function StudentDetailsModal({
       strengths,
       areasForImprovement,
       remark,
+      privateTeacherNotes,
       lastCoordinationDate: new Date().toLocaleDateString('ar-DZ')
     };
     onSaveStudent(updated);
@@ -74,8 +76,8 @@ export default function StudentDetailsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-5 overflow-y-auto">
-      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-2xl w-full max-h-[92dvh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden my-auto animate-scaleUp">
+    <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-5 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl max-w-2xl w-full max-h-[92dvh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-auto animate-scaleUp">
         {/* هيدر البطاقة */}
         <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white p-4 sm:p-6 relative shrink-0">
           <div className="flex items-start justify-between gap-3">
@@ -347,6 +349,24 @@ export default function StudentDetailsModal({
                     className="w-full px-3 py-2 rounded-xl border border-amber-200 text-xs focus:outline-none focus:border-amber-500"
                   />
                 </div>
+              </div>
+
+              {/* ملاحظات الأستاذ الخاصة والسرية (لا تظهر لولي الأمر) */}
+              <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-900 text-white border border-slate-700 shadow-inner">
+                <label className="block text-xs font-black text-amber-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    <span>ملاحظات الأستاذ الخاصة (سرية ولا تظهر لولي الأمر):</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">خاص بالأستاذ 🔒</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={privateTeacherNotes}
+                  onChange={e => setPrivateTeacherNotes(e.target.value)}
+                  placeholder="ملاحظات سرية حول صعوبات التلميذ، خطة معالجة خاصة، أو متابعة فردية لا يطلع عليها ولي الأمر..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 leading-relaxed"
+                />
               </div>
             </div>
           )}
