@@ -212,13 +212,24 @@ export default function TeacherSubscriptionPage({
         )}
 
         {subscription.status === 'suspended' && (
-          <div className="p-4 sm:p-5 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-200 flex items-start gap-3.5 shadow-sm">
+          <div className="p-4 sm:p-5 rounded-2xl bg-rose-950/50 border border-rose-500/60 text-rose-200 flex items-start gap-3.5 shadow-md">
             <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-            <div className="space-y-1 text-xs">
-              <strong className="text-sm font-black text-rose-300 block">حسابك موقوف مؤقتاً</strong>
+            <div className="space-y-1.5 text-xs">
+              <strong className="text-sm font-black text-rose-300 block">حسابك موقوف مؤقتاً لدواعي إدارية</strong>
               <p className="text-slate-300 leading-relaxed">
-                حسابك موقوف مؤقتاً بقرار الإدارة. يرجى التواصل مع الإدارة لمزيد من التفاصيل.
+                {subscription.adminNotes || 'حسابك معلق مؤقتاً بقرار الإدارة. كافة بياناتك وسجلاتك البيداغوجية وهوية Google الخاصة بك محفوظة بالكامل.'}
               </p>
+              <div className="pt-1 flex items-center gap-2">
+                <a
+                  href={`https://wa.me/213656636033?text=${encodeURIComponent(`السلام عليكم، أنا الأستاذ (${user.name} - ${user.email})، أود الاستفسار عن سبب إيقاف حسابي وإعادة تنشيطه.`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-sm"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>التواصل مع الإدارة عبر واتساب لإعادة التنشيط</span>
+                </a>
+              </div>
             </div>
           </div>
         )}

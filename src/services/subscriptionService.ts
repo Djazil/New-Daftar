@@ -1,11 +1,13 @@
-import { SubscriptionTier, SubscriptionPlanId, TeacherSubscription, PaymentProof, SubscriptionStatus } from '../types';
+import { SubscriptionTier, SubscriptionPlanId, TeacherSubscription, PaymentProof, SubscriptionStatus, AdminAuditLog } from '../types';
 import {
   saveSubscriptionToFirestore,
   fetchSubscriptionsFromFirestore,
   deleteSubscriptionFromFirestore,
   fetchDeletedSubscriptionsFromFirestore,
   removeDeletedSubscriptionFromFirestore,
-  subscribeToAllSubscriptionsInFirestore
+  subscribeToAllSubscriptionsInFirestore,
+  saveAdminAuditLogInFirestore,
+  fetchAdminAuditLogsFromFirestore
 } from './firebaseSubscriptionService';
 
 export const ADMIN_EMAIL = 'djazild@gmail.com';
@@ -90,30 +92,21 @@ const STORAGE_KEY = 'smart_notebook_subscriptions_v2';
 const DELETED_EMAILS_KEY = 'smart_notebook_deleted_subscriptions_v1';
 
 export function getDeletedEmails(): string[] {
+  // تنظيف أي قائمة حظر قديمة تلقائياً لضمان عدم حظر أي أستاذ
   try {
-    const raw = localStorage.getItem(DELETED_EMAILS_KEY);
-    let list: string[] = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
+    localStorage.removeItem(DELETED_EMAILS_KEY);
+  } catch {}
+  return [];
 }
 
-export function addDeletedEmail(email: string): void {
-  const clean = email.trim().toLowerCase();
-  if (!clean || clean === ADMIN_EMAIL.toLowerCase()) return;
-  const list = getDeletedEmails();
-  if (!list.includes(clean)) {
-    list.push(clean);
-    localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(list));
-  }
+export function addDeletedEmail(_email: string): void {
+  // تم إلغاء الحظر الدائم: لا يتم حظر أي بريد إلكتروني
 }
 
-export function removeDeletedEmail(email: string): void {
-  const clean = email.trim().toLowerCase();
-  if (!clean) return;
-  const list = getDeletedEmails().filter(e => e !== clean);
-  localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(list));
+export function removeDeletedEmail(_email: string): void {
+  try {
+    localStorage.removeItem(DELETED_EMAILS_KEY);
+  } catch {}
 }
 
 // تهيئة التخزين الأولي مع تفعيل دائم لحساب المدير المشرف العام فقط
@@ -147,17 +140,19 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
     }
   }
 
-  // ضمان وجود حساب المدير دائماً
+  // ضمان وجود حساب المدير دائماً بصلاحيات كاملة وتفعيل دائم
   const initial = getInitialSubscriptions();
   if (!map[ADMIN_EMAIL] || map[ADMIN_EMAIL].status !== 'active' || !map[ADMIN_EMAIL].isLifetime) {
     map[ADMIN_EMAIL] = initial[ADMIN_EMAIL];
   }
 
-  // تطبيق القائمة السوداء للمحذوفات نهائياً
-  const deleted = getDeletedEmails();
-  deleted.forEach(delEmail => {
-    if (delEmail !== ADMIN_EMAIL.toLowerCase()) {
-      delete map[delEmail];
+  // معالجة واستعادة الحسابات المتضررة سابقاً:
+  // أي حساب كان معلماً بحالة 'deleted' يتم فك الحظر عنه وتحويله تلقائياً إلى 'pending' (قيد المراجعة)
+  Object.keys(map).forEach(key => {
+    const sub = map[key];
+    if (sub && sub.status === 'deleted' && key.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      sub.status = 'pending';
+      sub.adminNotes = 'تم فك الحظر عن الحساب واستعادته لوضعية قيد المراجعة لطلب وصل جديد وتفعيله';
     }
   });
 
@@ -308,49 +303,47 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
 
 /**
  * تسجيل أو تحديث حساب الأستاذ عند تسجيل الدخول عبر Google
+ * يضمن عدم منع أي حساب من الدخول، وفصل حالة المصادقة عن حالة استحقاق الدفتر
  */
 export async function registerOrUpdateGoogleUser(user: { email: string; name: string }): Promise<TeacherSubscription> {
   const cleanEmail = user.email.trim().toLowerCase();
   
+  // المشرف الرئيسي محمي دائماً
   if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
     return getTeacherSubscription(ADMIN_EMAIL);
-  }
-
-  const deleted = getDeletedEmails();
-  // إذا كان الحساب محذوفاً سابقاً، يرجع كـ deleted للحد من إعادة الإنشاء التلقائية
-  if (deleted.includes(cleanEmail)) {
-    return {
-      teacherEmail: cleanEmail,
-      teacherName: user.name || cleanEmail.split('@')[0],
-      planId: 'none',
-      status: 'deleted',
-      amountDZD: 0,
-      expiresAt: null,
-      isLifetime: false,
-      adminNotes: 'حساب محذوف سابقاً من طرف الإدارة'
-    };
   }
 
   const all = loadAllSubscriptions();
   const existing = all[cleanEmail];
 
-  // الحساب المنسخ يبقى مفعل مدى الحياة إذا تم تفعيله مسبقاً من الإدارة
-  const isAlreadyActive = existing && existing.status === 'active';
-  const finalStatus: SubscriptionStatus = isAlreadyActive ? 'active' : 'pending';
+  // الحساب يبقى مفعلاً فقط إذا كان مفعلاً مسبقاً من الإدارة
+  // إذا كان الحساب موقوفاً (suspended)، يبقى موقوفاً ويسمح له بالدخول لرؤية سبب الإيقاف
+  // إذا كان جديداً أو ملغى أو قيد المراجعة، يُعين كـ 'pending'
+  let finalStatus: SubscriptionStatus = 'pending';
+  if (existing?.status === 'active') {
+    finalStatus = 'active';
+  } else if (existing?.status === 'suspended') {
+    finalStatus = 'suspended';
+  }
 
   const registeredSub: TeacherSubscription = {
     teacherEmail: cleanEmail,
     teacherName: user.name || existing?.teacherName || cleanEmail.split('@')[0],
     phoneNumber: existing?.phoneNumber || '',
-    planId: 'lifetime',
+    planId: existing?.planId || 'lifetime',
     status: finalStatus,
     amountDZD: existing?.amountDZD || 5000,
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || new Date().toISOString(),
     activatedAt: finalStatus === 'active' ? (existing?.activatedAt || new Date().toISOString()) : undefined,
+    suspendedAt: existing?.suspendedAt,
+    suspensionReason: existing?.suspensionReason,
+    canceledAt: existing?.canceledAt,
     expiresAt: null,
-    isLifetime: true,
-    adminNotes: existing?.adminNotes || 'تم إنشاء حساب الأستاذ. أرسل وصل الدفع عبر واتساب وانتظر تفعيل الحساب.'
+    isLifetime: finalStatus === 'active' ? (existing?.isLifetime ?? true) : false,
+    adminNotes: existing?.adminNotes || (finalStatus === 'suspended'
+      ? 'حسابك موقوف مؤقتاً بقرار الإدارة'
+      : 'تم إنشاء حساب الأستاذ. أرسل وصل الدفع عبر واتساب وانتظر تفعيل الحساب.')
   };
 
   all[cleanEmail] = registeredSub;
@@ -399,20 +392,6 @@ export function getTeacherSubscription(email: string): TeacherSubscription {
     };
   }
 
-  const deleted = getDeletedEmails();
-  if (deleted.includes(cleanEmail)) {
-    return {
-      teacherEmail: cleanEmail,
-      teacherName: '',
-      planId: 'none',
-      status: 'deleted',
-      amountDZD: 0,
-      expiresAt: null,
-      isLifetime: false,
-      adminNotes: 'هذا الحساب محذوف. يرجى التواصل مع الإدارة إذا كنت تريد استعادة الوصول.'
-    };
-  }
-
   const all = loadAllSubscriptions();
   const sub = all[cleanEmail];
 
@@ -421,10 +400,11 @@ export function getTeacherSubscription(email: string): TeacherSubscription {
       teacherEmail: cleanEmail,
       teacherName: cleanEmail.split('@')[0],
       planId: 'none',
-      status: 'none',
+      status: 'pending',
       amountDZD: 0,
       expiresAt: null,
-      isLifetime: false
+      isLifetime: false,
+      adminNotes: 'حساب مسجل بانتظار تفعيل الاشتراك'
     };
   }
 
@@ -642,7 +622,7 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     return {
       hasAccess: false,
       status: 'pending',
-      reason: 'طلبك قيد المراجعة. ستتمكن من الدخول بعد تفعيل الحساب.',
+      reason: 'طلبك قيد المراجعة. ستتمكن من الدخول بعد تفعيل الحساب من الإدارة.',
       subscription: sub
     };
   }
@@ -651,7 +631,7 @@ export function checkTeacherFeatureAccess(email?: string | null): {
     return {
       hasAccess: false,
       status: 'suspended',
-      reason: 'حسابك موقوف مؤقتاً. يرجى التواصل مع الإدارة.',
+      reason: 'حسابك موقوف مؤقتاً بقرار الإدارة. يرجى التواصل مع الإدارة لمزيد من التفاصيل.',
       subscription: sub
     };
   }
@@ -659,8 +639,8 @@ export function checkTeacherFeatureAccess(email?: string | null): {
   if (sub.status === 'deleted') {
     return {
       hasAccess: false,
-      status: 'deleted',
-      reason: 'هذا الحساب محذوف. يرجى التواصل مع الإدارة إذا كنت تريد استعادة الوصول.',
+      status: 'pending',
+      reason: 'تم إلغاء الاشتراك سابقاً. يمكنك طلب اشتراك وتفعيل جديد.',
       subscription: sub
     };
   }
@@ -668,39 +648,245 @@ export function checkTeacherFeatureAccess(email?: string | null): {
   return {
     hasAccess: false,
     status: 'none',
-    reason: 'تم إنشاء حسابك. أرسل وصل الدفع عبر واتساب.',
+    reason: 'تم إنشاء حسابك. أرسل وصل الدفع عبر واتساب وانتظر التفعيل.',
     subscription: sub
   };
 }
 
+// =========================================================
+// سجل التدقيق الإداري (Audit Logging)
+// =========================================================
+const AUDIT_LOGS_KEY = 'smart_notebook_admin_audit_logs_v1';
+
+export async function recordAdminAuditLog(log: {
+  actionType: AdminAuditLog['actionType'];
+  adminEmail: string;
+  targetTeacherEmail: string;
+  details?: string;
+  result: 'success' | 'failure';
+}): Promise<AdminAuditLog> {
+  const fullLog: AdminAuditLog = {
+    id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...log
+  };
+
+  // 1. حفظ محلي
+  try {
+    const raw = localStorage.getItem(AUDIT_LOGS_KEY);
+    const list: AdminAuditLog[] = raw ? JSON.parse(raw) : [];
+    list.unshift(fullLog);
+    localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(list.slice(0, 300)));
+  } catch {}
+
+  // 2. حفظ في Firestore
+  saveAdminAuditLogInFirestore(fullLog).catch(() => {});
+
+  // 3. حفظ في السيرفر
+  try {
+    fetch('/api/subscriptions/audit-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fullLog)
+    }).catch(() => {});
+  } catch {}
+
+  return fullLog;
+}
+
+export async function fetchAdminAuditLogs(): Promise<AdminAuditLog[]> {
+  try {
+    const res = await fetch('/api/subscriptions/audit-logs');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.logs) && data.logs.length > 0) {
+        return data.logs;
+      }
+    }
+  } catch {}
+
+  try {
+    const remote = await fetchAdminAuditLogsFromFirestore();
+    if (remote && remote.length > 0) return remote;
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(AUDIT_LOGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+// =========================================================
+// العمليات الإدارية الأربع المفصولة بالكامل
+// =========================================================
+
 /**
- * حذف حساب الأستاذ نهائياً وتوقيف صلاحياته فوراً
+ * 1. إلغاء الاشتراك (Cancel Subscription)
+ * إلغاء استحقاق الاشتراك فقط وتحويله إلى pending دون حذف حساب Google أو حظر البريد
  */
-export async function deleteTeacherAccount(
+export async function cancelTeacherSubscription(
   currentCallerEmail: string,
-  targetTeacherEmail: string
-): Promise<{ success: boolean; message: string }> {
+  targetTeacherEmail: string,
+  reason?: string
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
   if (!isCallerAuthorized(currentCallerEmail)) {
-    return { success: false, message: 'غير مصرح لك بحذف الحسابات.' };
+    await recordAdminAuditLog({
+      actionType: 'cancel_subscription',
+      adminEmail: currentCallerEmail,
+      targetTeacherEmail,
+      details: 'محاولة غير مصرح بها لإلغاء الاشتراك',
+      result: 'failure'
+    });
+    return { success: false, message: 'غير مصرح لك بإلغاء الاشتراكات.' };
   }
 
   const targetClean = targetTeacherEmail.trim().toLowerCase();
   if (targetClean === ADMIN_EMAIL.toLowerCase()) {
-    return { success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' };
+    return { success: false, message: 'لا يمكن إلغاء اشتراك المشرف العام djazild@gmail.com' };
   }
 
-  // 1. إضافة الحساب للقائمة السوداء للمحذوفات نهائياً
-  addDeletedEmail(targetClean);
-
-  // 2. حذف الحساب محلياً
   const all = loadAllSubscriptions();
-  delete all[targetClean];
+  const existing = all[targetClean];
+  if (!existing) {
+    return { success: false, message: 'حساب الأستاذ غير موجود.' };
+  }
+
+  const now = new Date().toISOString();
+  const updated: TeacherSubscription = {
+    ...existing,
+    status: 'pending',
+    planId: 'none',
+    isLifetime: false,
+    canceledAt: now,
+    adminNotes: reason ? `تم إلغاء الاشتراك: ${reason}` : 'تم إلغاء الاشتراك من طرف المشرف. الحساب مسجل بانتظار تجديد الاشتراك.'
+  };
+
+  all[targetClean] = updated;
   saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
 
-  // 3. مسح المستند وإضافته لقائمة المحذوفات في Firestore
-  await deleteSubscriptionFromFirestore(targetClean);
+  // إشعار السيرفر
+  fetch('/api/subscriptions/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      currentCallerEmail,
+      targetTeacherEmail: targetClean,
+      reason
+    })
+  }).catch(() => {});
 
-  // 4. مسح ملفات البيانات المحلية
+  await recordAdminAuditLog({
+    actionType: 'cancel_subscription',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: reason || 'تم إلغاء استحقاق الاشتراك وتحويله لحالة قيد المراجعة',
+    result: 'success'
+  });
+
+  return {
+    success: true,
+    message: `تم إلغاء اشتراك (${targetClean}) بنجاح. الحساب مسجل وقيد المراجعة مع الحفاظ الكامل على هوية Google.`,
+    subscription: updated
+  };
+}
+
+/**
+ * 2. إيقاف الحساب مؤقتاً أو إعادة تنشيطه (Suspend / Unsuspend)
+ * يغير حالة الحساب إلى suspended ويمنع الدخول للدفتر، مع إبقاء هوية Google وسجلات الأستاذ محفوظة
+ */
+export async function suspendTeacherAccount(
+  currentCallerEmail: string,
+  targetTeacherEmail: string,
+  suspend?: boolean,
+  reason: string = 'إيقاف مؤقت بقرار الإدارة'
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
+    await recordAdminAuditLog({
+      actionType: 'suspend',
+      adminEmail: currentCallerEmail,
+      targetTeacherEmail,
+      details: 'محاولة غير مصرح بها لتعليق حساب',
+      result: 'failure'
+    });
+    return { success: false, message: 'غير مصرح لك بتعطيل الحسابات.' };
+  }
+
+  const targetClean = targetTeacherEmail.trim().toLowerCase();
+  if (targetClean === ADMIN_EMAIL.toLowerCase()) {
+    return { success: false, message: 'لا يمكن إيقاف حساب المشرف العام djazild@gmail.com' };
+  }
+
+  const all = loadAllSubscriptions();
+  const existing = all[targetClean];
+  if (!existing) {
+    return { success: false, message: 'الحساب غير موجود' };
+  }
+
+  const isSuspending = suspend !== undefined ? suspend : existing.status !== 'suspended';
+  const newStatus: SubscriptionStatus = isSuspending ? 'suspended' : 'active';
+  const now = new Date().toISOString();
+
+  const updated: TeacherSubscription = {
+    ...existing,
+    status: newStatus,
+    suspendedAt: isSuspending ? now : undefined,
+    suspensionReason: isSuspending ? reason : undefined,
+    adminNotes: isSuspending ? `حساب موقوف مؤقتاً: ${reason}` : 'حساب مفعّل. تم رفع الإيقاف من طرف المشرف.'
+  };
+
+  all[targetClean] = updated;
+  saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(updated);
+
+  // إشعار السيرفر
+  fetch('/api/subscriptions/suspend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      currentCallerEmail,
+      targetTeacherEmail: targetClean,
+      reason,
+      suspend: isSuspending
+    })
+  }).catch(() => {});
+
+  await recordAdminAuditLog({
+    actionType: isSuspending ? 'suspend' : 'unsuspend',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: reason || (isSuspending ? 'إيقاف مؤقت للحساب' : 'رفع الإيقاف وتنشيط الحساب'),
+    result: 'success'
+  });
+
+  return {
+    success: true,
+    message: isSuspending
+      ? `تم إيقاف حساب (${targetClean}) مؤقتاً مع الحفاظ على كافة سجلاته وهويته.`
+      : `تم رفع الإيقاف عن حساب (${targetClean}) وإعادة تفعيله بنجاح.`,
+    subscription: updated
+  };
+}
+
+/**
+ * 3. حذف / إعادة تعيين ملف الأستاذ من التطبيق (Reset Notebook Data)
+ * تصفير بيانات أقسام وتلاميذ الأستاذ دون حذف حسابه أو هوية Google أو اشتراكه
+ */
+export async function resetTeacherNotebookData(
+  currentCallerEmail: string,
+  targetTeacherEmail: string
+): Promise<{ success: boolean; message: string }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
+    return { success: false, message: 'غير مصرح لك بإعادة تعيين بيانات الأساتذة.' };
+  }
+
+  const targetClean = targetTeacherEmail.trim().toLowerCase();
+  if (targetClean === ADMIN_EMAIL.toLowerCase()) {
+    return { success: false, message: 'لا يمكن تصفير ملف المشرف العام djazild@gmail.com' };
+  }
+
   const cleanKey = targetClean.replace(/[^a-z0-9]/g, '_');
   try {
     localStorage.removeItem(`teacher_profile_${cleanKey}`);
@@ -710,17 +896,93 @@ export async function deleteTeacherAccount(
     localStorage.removeItem(`teacher_pdfs_${cleanKey}`);
   } catch {}
 
-  // 5. إشعار السيرفر
-  fetch('/api/subscriptions/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ targetTeacherEmail: targetClean })
-  }).catch(e => console.warn('Background sync delete failed:', e));
+  await recordAdminAuditLog({
+    actionType: 'reset_notebook_data',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: 'إعادة تعيين وتصفير بيانات الدفتر والأقسام للأستاذ',
+    result: 'success'
+  });
 
   return {
     success: true,
-    message: `تم حذف الحساب نهائياً (${targetClean}) ولن يستطيع الدخول إلا بعد الاستعادة.`
+    message: `تمت إعادة تعيين ملف وبيانات دفتر الأستاذ (${targetClean}) بنجاح، مع بقاء حسابه واشتراكه محفوظين.`
   };
+}
+
+/**
+ * 4. حذف الحساب نهائياً (Permanent Delete)
+ * عملية منفصلة صريحة مع تأكيد؛ لا تحظر بريد Gmail من التسجيل مستقبلاً
+ */
+export async function permanentlyDeleteTeacherAccount(
+  currentCallerEmail: string,
+  targetTeacherEmail: string,
+  confirmation?: string
+): Promise<{ success: boolean; message: string }> {
+  if (!isCallerAuthorized(currentCallerEmail)) {
+    return { success: false, message: 'غير مصرح لك بحذف الحسابات.' };
+  }
+
+  if (confirmation !== 'DELETE_CONFIRMED') {
+    return { success: false, message: 'يرجى تأكيد الحذف الصريح.' };
+  }
+
+  const targetClean = targetTeacherEmail.trim().toLowerCase();
+  if (targetClean === ADMIN_EMAIL.toLowerCase()) {
+    return { success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' };
+  }
+
+  // 1. حذف الحساب من قائمة الاشتراكات
+  const all = loadAllSubscriptions();
+  delete all[targetClean];
+  saveAllSubscriptions(all);
+
+  // 2. حذف وثيقة الاشتراك من Firestore دون إضافة أي قائمة حظر
+  await deleteSubscriptionFromFirestore(targetClean);
+
+  // 3. مسح كاش البيانات المحلي
+  const cleanKey = targetClean.replace(/[^a-z0-9]/g, '_');
+  try {
+    localStorage.removeItem(`teacher_profile_${cleanKey}`);
+    localStorage.removeItem(`teacher_classes_${cleanKey}`);
+    localStorage.removeItem(`teacher_curriculum_${cleanKey}`);
+    localStorage.removeItem(`teacher_timetable_${cleanKey}`);
+    localStorage.removeItem(`teacher_pdfs_${cleanKey}`);
+  } catch {}
+
+  // 4. إشعار السيرفر
+  fetch('/api/subscriptions/permanent-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      currentCallerEmail,
+      targetTeacherEmail: targetClean,
+      confirmation: 'DELETE_CONFIRMED'
+    })
+  }).catch(() => {});
+
+  await recordAdminAuditLog({
+    actionType: 'permanent_delete',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: 'حذف نهائي صريح لسجل الحساب دون حظر البريد مستقبلاً',
+    result: 'success'
+  });
+
+  return {
+    success: true,
+    message: `تم حذف حساب (${targetClean}) نهائياً من قاعدة البيانات، دون حظر بريده الإلكتروني.`
+  };
+}
+
+/**
+ * التوافقية العكسية: دالة deleteTeacherAccount تستدعي الحذف الآمن دون حظر
+ */
+export async function deleteTeacherAccount(
+  currentCallerEmail: string,
+  targetTeacherEmail: string
+): Promise<{ success: boolean; message: string }> {
+  return permanentlyDeleteTeacherAccount(currentCallerEmail, targetTeacherEmail, 'DELETE_CONFIRMED');
 }
 
 /**
@@ -735,9 +997,6 @@ export async function restoreTeacherAccount(
   }
 
   const targetClean = targetTeacherEmail.trim().toLowerCase();
-  removeDeletedEmail(targetClean);
-  await removeDeletedSubscriptionFromFirestore(targetClean);
-
   const restoredSub: TeacherSubscription = {
     teacherEmail: targetClean,
     teacherName: targetClean.split('@')[0],
@@ -746,8 +1005,8 @@ export async function restoreTeacherAccount(
     amountDZD: 5000,
     requestedAt: new Date().toISOString(),
     expiresAt: null,
-    isLifetime: true,
-    adminNotes: 'تم استعادة الحساب المحذوف من طرف المشرف بانتظار التفعيل'
+    isLifetime: false,
+    adminNotes: 'تمت استعادة الحساب من طرف المشرف وهو قيد المراجعة بانتظار التفعيل'
   };
 
   const all = loadAllSubscriptions();
@@ -755,52 +1014,16 @@ export async function restoreTeacherAccount(
   saveAllSubscriptions(all);
   await saveSubscriptionToFirestore(restoredSub);
 
-  return {
-    success: true,
-    message: `تمت استعادة حساب (${targetClean}) بنجاح وتحويله لوضعية بانتظار التفعيل.`
-  };
-}
-
-/**
- * تعليق/إيقاف حساب أستاذ مؤقتاً
- */
-export async function suspendTeacherAccount(
-  currentCallerEmail: string,
-  targetTeacherEmail: string,
-  reason: string = 'تعطيل مؤقت بقرار المشرف',
-  suspend?: boolean
-): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
-  if (!isCallerAuthorized(currentCallerEmail)) {
-    return { success: false, message: 'غير مصرح لك بتعطيل الحسابات.' };
-  }
-
-  const targetClean = targetTeacherEmail.trim().toLowerCase();
-  if (targetClean === ADMIN_EMAIL.toLowerCase()) {
-    return { success: false, message: 'لا يمكن تعطيل حساب المشرف العام djazild@gmail.com' };
-  }
-
-  const all = loadAllSubscriptions();
-  const existing = all[targetClean];
-  if (!existing) {
-    return { success: false, message: 'الحساب غير موجود' };
-  }
-
-  const isSuspending = suspend !== undefined ? suspend : existing.status !== 'suspended';
-  const newStatus: SubscriptionStatus = isSuspending ? 'suspended' : 'active';
-
-  const updated: TeacherSubscription = {
-    ...existing,
-    status: newStatus,
-    adminNotes: isSuspending ? `حسابك موقوف مؤقتاً. يرجى التواصل مع الإدارة.` : `حسابك مفعّل. يمكنك الدخول إلى الدفتر.`
-  };
-
-  all[targetClean] = updated;
-  saveAllSubscriptions(all);
-  await saveSubscriptionToFirestore(updated);
+  await recordAdminAuditLog({
+    actionType: 'restore',
+    adminEmail: currentCallerEmail,
+    targetTeacherEmail: targetClean,
+    details: 'استعادة الحساب إلى حالة قيد المراجعة',
+    result: 'success'
+  });
 
   return {
     success: true,
-    message: isSuspending ? `تم إيقاف حساب (${targetClean}) مؤقتاً.` : `تمت إعادة تفعيل حساب (${targetClean}) بنجاح.`,
-    subscription: updated
+    message: `تمت استعادة حساب (${targetClean}) بنجاح وتحويله إلى قيد المراجعة بانتظار التفعيل.`
   };
 }

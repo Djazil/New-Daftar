@@ -174,5 +174,27 @@ export interface TeacherSubscription {
   activatedByAdminEmail?: string;
   adminNotes?: string;
   isLifetime: boolean;
+  suspendedAt?: string;
+  suspensionReason?: string;
+  canceledAt?: string;
+}
+
+export type AdminActionType =
+  | 'activate'
+  | 'cancel_subscription'
+  | 'suspend'
+  | 'unsuspend'
+  | 'reset_notebook_data'
+  | 'permanent_delete'
+  | 'restore';
+
+export interface AdminAuditLog {
+  id: string;
+  actionType: AdminActionType;
+  adminEmail: string;
+  targetTeacherEmail: string;
+  timestamp: string;
+  details?: string;
+  result: 'success' | 'failure';
 }
 

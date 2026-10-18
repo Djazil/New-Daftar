@@ -30,6 +30,21 @@
         "deletedBy": { "type": "string" }
       },
       "required": ["teacherEmail"]
+    },
+    "AdminAuditLog": {
+      "title": "Admin Audit Log",
+      "description": "Audit record for administrative operations (activation, suspension, cancellation, deletion)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "actionType": { "type": "string" },
+        "adminEmail": { "type": "string" },
+        "targetTeacherEmail": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "details": { "type": "string" },
+        "result": { "type": "string" }
+      },
+      "required": ["id", "actionType", "adminEmail", "targetTeacherEmail", "timestamp", "result"]
     }
   },
   "firestore": {
@@ -39,7 +54,11 @@
     },
     "/deleted_subscriptions/{teacherEmailKey}": {
       "schema": "DeletedSubscription",
-      "description": "Blacklist collection for deleted teacher accounts"
+      "description": "Legacy deletion collection - no longer used to block logins"
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": "AdminAuditLog",
+      "description": "Collection of administrative audit trail logs"
     }
   }
 }

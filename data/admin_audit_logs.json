@@ -1,0 +1,47 @@
+[
+  {
+    "actionType": "permanent_delete",
+    "adminEmail": "djazild@gmail.com",
+    "targetTeacherEmail": "prof.test_flow@gmail.com",
+    "details": "حذف نهائي لسجل الحساب دون حظر البريد مستقبلاً",
+    "result": "success",
+    "id": "audit_1792313970600_6sb4z",
+    "timestamp": "2026-10-18T08:59:30.600Z"
+  },
+  {
+    "actionType": "unsuspend",
+    "adminEmail": "djazild@gmail.com",
+    "targetTeacherEmail": "prof.test_flow@gmail.com",
+    "details": "رفع الإيقاف وتنشيط الحساب",
+    "result": "success",
+    "id": "audit_1792313970590_61i5w",
+    "timestamp": "2026-10-18T08:59:30.590Z"
+  },
+  {
+    "actionType": "suspend",
+    "adminEmail": "djazild@gmail.com",
+    "targetTeacherEmail": "prof.test_flow@gmail.com",
+    "details": "مراجعة أمنية وإدارية",
+    "result": "success",
+    "id": "audit_1792313970585_90fmq",
+    "timestamp": "2026-10-18T08:59:30.585Z"
+  },
+  {
+    "actionType": "cancel_subscription",
+    "adminEmail": "djazild@gmail.com",
+    "targetTeacherEmail": "prof.test_flow@gmail.com",
+    "details": "انتهاء الاشتراك التجريبي",
+    "result": "success",
+    "id": "audit_1792313970573_j564h",
+    "timestamp": "2026-10-18T08:59:30.573Z"
+  },
+  {
+    "actionType": "activate",
+    "adminEmail": "djazild@gmail.com",
+    "targetTeacherEmail": "prof.test_flow@gmail.com",
+    "details": "تم تفعيل الاشتراك (lifetime)",
+    "result": "success",
+    "id": "audit_1792313970547_ao610",
+    "timestamp": "2026-10-18T08:59:30.547Z"
+  }
+]

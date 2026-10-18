@@ -3,7 +3,7 @@ import {
   getDoc, getDocFromServer
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { TeacherSubscription } from '../types';
+import { TeacherSubscription, AdminAuditLog } from '../types';
 
 export enum OperationType {
   CREATE = 'create',
@@ -116,7 +116,7 @@ export async function fetchSubscriptionsFromFirestore(): Promise<Record<string, 
 }
 
 /**
- * حذف حساب أستاذ نهائياً من Firestore مع إضافته للقائمة السوداء للمحذوفات
+ * حذف سجل اشتراك الأستاذ من Firestore دون حظر بريده أو حذف حسابه
  */
 export async function deleteSubscriptionFromFirestore(teacherEmail: string): Promise<boolean> {
   const cleanEmail = teacherEmail.trim().toLowerCase();
@@ -124,15 +124,13 @@ export async function deleteSubscriptionFromFirestore(teacherEmail: string): Pro
   const path = `subscriptions/${docKey}`;
 
   try {
-    // 1. مسح مستند الاشتراك
+    // 1. مسح مستند الاشتراك فقط
     await deleteDoc(doc(db, 'subscriptions', docKey));
-    
-    // 2. إضافة إلى قائمة المحذوفات في Firestore
-    await setDoc(doc(db, 'deleted_subscriptions', docKey), {
-      teacherEmail: cleanEmail,
-      deletedAt: new Date().toISOString(),
-      deletedBy: 'djazild@gmail.com'
-    });
+
+    // 2. تنظيف أي سجل قديم في deleted_subscriptions لضمان عدم حظر الأستاذ
+    try {
+      await deleteDoc(doc(db, 'deleted_subscriptions', docKey));
+    } catch {}
 
     return true;
   } catch (err) {
@@ -142,24 +140,49 @@ export async function deleteSubscriptionFromFirestore(teacherEmail: string): Pro
 }
 
 /**
- * جلب قائمة البريد الممنوع/المحذوف نهائياً من Firestore
+ * تسجيل وتوثيق عملية إدارية في Firestore لسجل التدقيق الإداري
  */
-export async function fetchDeletedSubscriptionsFromFirestore(): Promise<string[]> {
-  const path = 'deleted_subscriptions';
+export async function saveAdminAuditLogInFirestore(log: AdminAuditLog): Promise<boolean> {
+  const path = `admin_audit_logs/${log.id}`;
+  try {
+    await setDoc(doc(db, 'admin_audit_logs', log.id), {
+      ...log,
+      createdAt: new Date().toISOString()
+    });
+    return true;
+  } catch (err) {
+    console.warn('Audit log write warning:', err);
+    return false;
+  }
+}
+
+/**
+ * جلب سجل العمليات الإدارية من Firestore
+ */
+export async function fetchAdminAuditLogsFromFirestore(): Promise<AdminAuditLog[]> {
+  const path = 'admin_audit_logs';
   try {
     const snapshot = await getDocs(collection(db, path));
-    const list: string[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (data && data.teacherEmail) {
-        list.push(data.teacherEmail.trim().toLowerCase());
+    const list: AdminAuditLog[] = [];
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data() as AdminAuditLog;
+      if (data && data.id) {
+        list.push(data);
       }
     });
-    return list;
+    return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, path);
+    console.warn('Audit log fetch warning:', err);
     return [];
   }
+}
+
+/**
+ * جلب قائمة البريد المحذوف سابقاً مع إتاحة فك الحظر التلقائي
+ */
+export async function fetchDeletedSubscriptionsFromFirestore(): Promise<string[]> {
+  // لا نقوم بإرجاع أي قائمة حظر لمنع حظر أي أستاذ من الدخول
+  return [];
 }
 
 /**
@@ -172,7 +195,6 @@ export async function removeDeletedSubscriptionFromFirestore(teacherEmail: strin
     await deleteDoc(doc(db, 'deleted_subscriptions', docKey));
     return true;
   } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `deleted_subscriptions/${docKey}`);
     return false;
   }
 }

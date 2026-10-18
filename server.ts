@@ -12,49 +12,72 @@ const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const SUBSCRIPTIONS_FILE = path.join(DATA_DIR, 'subscriptions.json');
 const DELETED_FILE = path.join(DATA_DIR, 'deleted_subscriptions.json');
+const AUDIT_LOGS_FILE = path.join(DATA_DIR, 'admin_audit_logs.json');
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Manage deleted subscriptions blacklist
-function getDeletedEmailsData(): string[] {
+// Automatically ensure no Gmail accounts are blocked or blacklisted
+if (fs.existsSync(DELETED_FILE)) {
   try {
-    if (!fs.existsSync(DELETED_FILE)) {
+    fs.writeFileSync(DELETED_FILE, JSON.stringify([], null, 2), 'utf-8');
+  } catch {}
+}
+
+function getDeletedEmailsData(): string[] {
+  // Always return empty array so that no Gmail is permanently blocked from accessing or logging into the app
+  return [];
+}
+
+function saveDeletedEmailData(_email: string): void {
+  // Disabled: Do not permanently blacklist any email when deleted/canceled
+}
+
+function removeDeletedEmailData(_email: string): void {
+  // Always clean deleted file
+  try {
+    if (fs.existsSync(DELETED_FILE)) {
+      fs.writeFileSync(DELETED_FILE, JSON.stringify([], null, 2), 'utf-8');
+    }
+  } catch {}
+}
+
+// Audit Logs Management
+function getAuditLogsData(): any[] {
+  try {
+    if (!fs.existsSync(AUDIT_LOGS_FILE)) {
       return [];
     }
-    const raw = fs.readFileSync(DELETED_FILE, 'utf-8');
-    const list: string[] = JSON.parse(raw);
+    const raw = fs.readFileSync(AUDIT_LOGS_FILE, 'utf-8');
+    const list = JSON.parse(raw);
     return Array.isArray(list) ? list : [];
   } catch (err) {
-    console.error('Error reading deleted subscriptions file:', err);
+    console.error('Error reading audit logs file:', err);
     return [];
   }
 }
 
-function saveDeletedEmailData(email: string): void {
-  const list = getDeletedEmailsData();
-  const clean = email.trim().toLowerCase();
-  if (clean && !list.includes(clean)) {
-    list.push(clean);
-    try {
-      fs.writeFileSync(DELETED_FILE, JSON.stringify(list, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('Error saving deleted email:', err);
-    }
+function saveAuditLogData(log: any): void {
+  try {
+    const list = getAuditLogsData();
+    list.unshift({
+      ...log,
+      id: log.id || `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: log.timestamp || new Date().toISOString()
+    });
+    fs.writeFileSync(AUDIT_LOGS_FILE, JSON.stringify(list.slice(0, 500), null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving audit log file:', err);
   }
 }
 
-function removeDeletedEmailData(email: string): void {
-  const list = getDeletedEmailsData();
-  const clean = email.trim().toLowerCase();
-  const filtered = list.filter(e => e !== clean);
-  try {
-    fs.writeFileSync(DELETED_FILE, JSON.stringify(filtered, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error removing deleted email:', err);
-  }
+// Check admin caller permissions on server-side
+function isServerAdmin(callerEmail?: string): boolean {
+  if (!callerEmail) return false;
+  const clean = String(callerEmail).trim().toLowerCase();
+  return clean === 'djazild@gmail.com' || clean === 'hdjazil95@gmail.com';
 }
 
 // Default initial subscriptions
@@ -236,61 +259,66 @@ async function startServer() {
     };
 
     saveSubscriptionsData(subs);
+    saveAuditLogData({
+      actionType: 'activate',
+      adminEmail: currentCallerEmail || 'djazild@gmail.com',
+      targetTeacherEmail: emailClean,
+      details: `تم تفعيل الاشتراك (${planId})`,
+      result: 'success'
+    });
     console.log(`[API] Subscription activated for: ${emailClean}`);
     res.json({ success: true, message: `تم تفعيل حساب الأستاذ ${emailClean} بنجاح`, subscription: subs[emailClean] });
   });
 
-  // API Route: Expire / Revoke subscription
-  app.post('/api/subscriptions/expire', (req, res) => {
-    const { targetTeacherEmail, reason } = req.body;
-    if (!targetTeacherEmail) {
-      return res.status(400).json({ success: false, message: 'البريد الإلكتروني مطلوب' });
-    }
-
-    const emailClean = targetTeacherEmail.trim().toLowerCase();
-    const subs = getSubscriptionsData();
-
-    if (subs[emailClean]) {
-      subs[emailClean] = {
-        ...subs[emailClean],
-        status: 'expired',
-        expiresAt: new Date(Date.now() - 1000).toISOString(),
-        adminNotes: `تم توقيف الاشتراك: ${reason || 'بواسطة المشرف'}`
-      };
-      saveSubscriptionsData(subs);
-    }
-
-    res.json({ success: true, message: 'تم إيقاف الاشتراك بنجاح', subscription: subs[emailClean] });
-  });
-
-  // API Route: Delete subscription/account permanently across all states
-  app.post('/api/subscriptions/delete', (req, res) => {
-    const { targetTeacherEmail } = req.body;
+  // API Route: 1. إلغاء الاشتراك فقط (Cancel subscription -> status: pending)
+  app.post('/api/subscriptions/cancel', (req, res) => {
+    const { currentCallerEmail, targetTeacherEmail, reason } = req.body;
     if (!targetTeacherEmail) {
       return res.status(400).json({ success: false, message: 'البريد الإلكتروني للأستاذ مطلوب' });
     }
 
     const emailClean = targetTeacherEmail.trim().toLowerCase();
     if (emailClean === 'djazild@gmail.com') {
-      return res.status(403).json({ success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' });
+      return res.status(403).json({ success: false, message: 'لا يمكن إلغاء اشتراك المشرف العام djazild@gmail.com' });
     }
-
-    // Save to deleted emails blacklist permanently
-    saveDeletedEmailData(emailClean);
 
     const subs = getSubscriptionsData();
-    if (subs[emailClean]) {
-      delete subs[emailClean];
-      saveSubscriptionsData(subs);
+    const existing = subs[emailClean];
+
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'حساب الأستاذ غير مسجل' });
     }
 
-    console.log(`[API] Account deleted permanently and blacklisted: ${emailClean}`);
-    return res.json({ success: true, message: `تم إلغاء الاشتراك وحذف حساب الأستاذ ${emailClean} نهائياً من السيرفر. يجب على الأستاذ إعادة التسجيل وطلب التفعيل من جديد.` });
+    const now = new Date().toISOString();
+    subs[emailClean] = {
+      ...existing,
+      status: 'pending',
+      planId: 'none',
+      isLifetime: false,
+      canceledAt: now,
+      adminNotes: `تم إلغاء الاشتراك من طرف المشرف: ${reason || 'بانتظار تجديد الاشتراك وإرسال وصل جديد'}`
+    };
+
+    saveSubscriptionsData(subs);
+    saveAuditLogData({
+      actionType: 'cancel_subscription',
+      adminEmail: currentCallerEmail || 'djazild@gmail.com',
+      targetTeacherEmail: emailClean,
+      details: reason || 'إلغاء استحقاق الاشتراك وتحويله إلى قيد المراجعة',
+      result: 'success'
+    });
+
+    console.log(`[API] Subscription canceled for: ${emailClean} (now pending)`);
+    res.json({
+      success: true,
+      message: `تم إلغاء اشتراك الأستاذ (${emailClean}) بنجاح. الحساب مسجل وقيد المراجعة دون حظر.`,
+      subscription: subs[emailClean]
+    });
   });
 
-  // API Route: Suspend / Disable account temporarily
+  // API Route: 2. إيقاف / إعادة تنشيط الحساب (Suspend / Unsuspend)
   app.post('/api/subscriptions/suspend', (req, res) => {
-    const { targetTeacherEmail, reason, suspend } = req.body;
+    const { currentCallerEmail, targetTeacherEmail, reason, suspend } = req.body;
     if (!targetTeacherEmail) {
       return res.status(400).json({ success: false, message: 'البريد الإلكتروني مطلوب' });
     }
@@ -309,22 +337,125 @@ async function startServer() {
 
     const isSuspending = suspend !== undefined ? Boolean(suspend) : existing.status !== 'suspended';
     const newStatus = isSuspending ? 'suspended' : 'active';
+    const now = new Date().toISOString();
 
     subs[emailClean] = {
       ...existing,
       status: newStatus,
+      suspendedAt: isSuspending ? now : undefined,
+      suspensionReason: isSuspending ? (reason || 'بقرار إداري مؤقت') : undefined,
       adminNotes: isSuspending
-        ? `حساب معطل مؤقتاً: ${reason || 'بقرار الإدارة'}`
-        : `تم رفع التعطيل وإعادة التنشيط من لوحة المشرف`
+        ? `حساب موقوف مؤقتاً: ${reason || 'بقرار الإدارة'}`
+        : `تم رفع الإيقاف وإعادة تنشيط الحساب`
     };
 
     saveSubscriptionsData(subs);
-    console.log(`[API] Subscription suspension toggled for ${emailClean}: ${newStatus}`);
+    saveAuditLogData({
+      actionType: isSuspending ? 'suspend' : 'unsuspend',
+      adminEmail: currentCallerEmail || 'djazild@gmail.com',
+      targetTeacherEmail: emailClean,
+      details: reason || (isSuspending ? 'إيقاف مؤقت للحساب' : 'رفع الإيقاف وتنشيط الحساب'),
+      result: 'success'
+    });
+
+    console.log(`[API] Suspension updated for ${emailClean}: ${newStatus}`);
     res.json({
       success: true,
-      message: isSuspending ? `تم تعطيل حساب الأستاذ ${emailClean} مؤقتاً` : `تم إلغاء تعطيل حساب الأستاذ ${emailClean} وإعادة تفعيله`,
+      message: isSuspending
+        ? `تم إيقاف حساب الأستاذ (${emailClean}) مؤقتاً مع الحفاظ على كافة سجلاته وهويته.`
+        : `تم رفع الإيقاف عن حساب الأستاذ (${emailClean}) بنجاح.`,
       subscription: subs[emailClean]
     });
+  });
+
+  // API Route: 3. الحذف النهائي الصريح (Permanent Delete - without blacklisting Gmail)
+  app.post('/api/subscriptions/permanent-delete', (req, res) => {
+    const { currentCallerEmail, targetTeacherEmail, confirmation } = req.body;
+    if (!targetTeacherEmail) {
+      return res.status(400).json({ success: false, message: 'البريد الإلكتروني للأستاذ مطلوب' });
+    }
+
+    const emailClean = targetTeacherEmail.trim().toLowerCase();
+    if (emailClean === 'djazild@gmail.com') {
+      return res.status(403).json({ success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' });
+    }
+
+    if (confirmation !== 'DELETE_CONFIRMED') {
+      return res.status(400).json({ success: false, message: 'يرجى تأكيد الحذف الصريح' });
+    }
+
+    // Never blacklist the Gmail address!
+    removeDeletedEmailData(emailClean);
+
+    const subs = getSubscriptionsData();
+    if (subs[emailClean]) {
+      delete subs[emailClean];
+      saveSubscriptionsData(subs);
+    }
+
+    saveAuditLogData({
+      actionType: 'permanent_delete',
+      adminEmail: currentCallerEmail || 'djazild@gmail.com',
+      targetTeacherEmail: emailClean,
+      details: 'حذف نهائي لسجل الحساب دون حظر البريد مستقبلاً',
+      result: 'success'
+    });
+
+    console.log(`[API] Account permanently deleted (NOT blacklisted): ${emailClean}`);
+    return res.json({
+      success: true,
+      message: `تم حذف حساب الأستاذ (${emailClean}) نهائياً من قاعدة البيانات، دون حظر بريده الإلكتروني.`
+    });
+  });
+
+  // Legacy delete fallback - maps safely to non-blacklisting removal
+  app.post('/api/subscriptions/delete', (req, res) => {
+    const { currentCallerEmail, targetTeacherEmail } = req.body;
+    if (!targetTeacherEmail) {
+      return res.status(400).json({ success: false, message: 'البريد الإلكتروني للأستاذ مطلوب' });
+    }
+
+    const emailClean = targetTeacherEmail.trim().toLowerCase();
+    if (emailClean === 'djazild@gmail.com') {
+      return res.status(403).json({ success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' });
+    }
+
+    removeDeletedEmailData(emailClean);
+
+    const subs = getSubscriptionsData();
+    if (subs[emailClean]) {
+      delete subs[emailClean];
+      saveSubscriptionsData(subs);
+    }
+
+    saveAuditLogData({
+      actionType: 'permanent_delete',
+      adminEmail: currentCallerEmail || 'djazild@gmail.com',
+      targetTeacherEmail: emailClean,
+      details: 'حذف الحساب عبر المسار القديم دون حظر البريد',
+      result: 'success'
+    });
+
+    return res.json({
+      success: true,
+      message: `تم حذف الحساب بنجاح دون أي حظر لبريد Gmail.`
+    });
+  });
+
+  // API Route: Get & Post Audit Logs
+  app.get('/api/subscriptions/audit-logs', (_req, res) => {
+    const logs = getAuditLogsData();
+    res.json({ success: true, logs });
+  });
+
+  app.post('/api/subscriptions/audit-logs', (req, res) => {
+    const log = req.body;
+    if (log && log.actionType && log.targetTeacherEmail) {
+      saveAuditLogData(log);
+      res.json({ success: true, message: 'تم حفظ سجل التدقيق بنجاح' });
+    } else {
+      res.status(400).json({ success: false, message: 'بيانات السجل غير مكتملة' });
+    }
   });
 
   // API Route: Extend subscription
