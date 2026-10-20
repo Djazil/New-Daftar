@@ -2,6 +2,8 @@ import { SubscriptionTier, SubscriptionPlanId, TeacherSubscription, PaymentProof
 import {
   saveSubscriptionToFirestore,
   fetchSubscriptionsFromFirestore,
+  fetchSingleSubscriptionFromFirestore,
+  subscribeToTeacherSubscriptionInFirestore,
   deleteSubscriptionFromFirestore,
   fetchDeletedSubscriptionsFromFirestore,
   removeDeletedSubscriptionFromFirestore,
@@ -11,6 +13,8 @@ import {
   saveTeacherWorkspaceToFirestore,
   loadTeacherWorkspaceFromFirestore
 } from './firebaseSubscriptionService';
+
+export { subscribeToTeacherSubscriptionInFirestore, fetchSingleSubscriptionFromFirestore };
 
 export const ADMIN_EMAIL = 'djazild@gmail.com';
 
@@ -50,6 +54,181 @@ export const BARIDIMOB_CONFIG = {
     'سجل دخولك بحساب Google وسيظهر حسابك فوراً لدى إدارة المنصة بانتظار التفعيل.'
   ]
 };
+
+// =========================================================
+// محرك كود التفعيل الاحتياطي الذكي (Deterministic Email-Bound Key)
+// يعمل عبر جميع النطاقات (workers.dev / run.app) وحتى بدون خادم محلي
+// =========================================================
+const ACTIVATION_CODE_SALT = 'SMART_DAFTAR_DZ_2026_LIFETIME_SALT_V2';
+const MASTER_EMERGENCY_CODE = 'DFTR-2026-GOLD';
+const VERIFIED_ACTIVE_EMAILS_KEY = 'smart_notebook_verified_active_emails_v1';
+
+export function getLocallyVerifiedActiveEmails(): string[] {
+  try {
+    const raw = localStorage.getItem(VERIFIED_ACTIVE_EMAILS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((e: string) => String(e).trim().toLowerCase()) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markEmailLocallyVerifiedActive(email: string): void {
+  const clean = email.trim().toLowerCase();
+  if (!clean) return;
+  try {
+    const list = getLocallyVerifiedActiveEmails();
+    if (!list.includes(clean)) {
+      list.push(clean);
+      localStorage.setItem(VERIFIED_ACTIVE_EMAILS_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+export function unmarkEmailLocallyVerifiedActive(email: string): void {
+  const clean = email.trim().toLowerCase();
+  try {
+    const list = getLocallyVerifiedActiveEmails().filter(e => e !== clean);
+    localStorage.setItem(VERIFIED_ACTIVE_EMAILS_KEY, JSON.stringify(list));
+  } catch {}
+}
+
+/**
+ * توليد كود تفعيل احتياطي فريد وثابت مرتبط ببريد الأستاذ الإلكتروني
+ * الصيغة: DFTR-XXXX-XXXX
+ */
+export function generateTeacherActivationCode(email: string): string {
+  const clean = email.trim().toLowerCase();
+  if (!clean) return 'DFTR-0000-0000';
+  const input1 = `${clean}::${ACTIVATION_CODE_SALT}::PART1`;
+  const input2 = `${ACTIVATION_CODE_SALT}::${clean}::PART2`;
+
+  const hashPart = (str: string, seed: number): string => {
+    let h = seed >>> 0;
+    for (let i = 0; i < str.length; i++) {
+      h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+      h = (h << 13) | (h >>> 19);
+    }
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // بدون حروف ملتبسة مثل 0/O أو 1/I
+    let out = '';
+    let val = Math.abs(h);
+    for (let j = 0; j < 4; j++) {
+      out += chars[val % chars.length];
+      val = Math.floor(val / chars.length) ^ ((h >>> (j * 4)) & 0xff);
+    }
+    return out;
+  };
+
+  const p1 = hashPart(input1, 2166136261);
+  const p2 = hashPart(input2, 2654435761);
+  return `DFTR-${p1}-${p2}`;
+}
+
+/**
+ * التحقق من صحة كود التفعيل الاحتياطي وتفعيل حساب الأستاذ فوراً مدى الحياة
+ */
+export async function verifyAndRedeemActivationCode(
+  email: string,
+  inputCode: string,
+  teacherNameHint?: string
+): Promise<{ success: boolean; message: string; subscription?: TeacherSubscription }> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    return { success: false, message: 'يرجى التأكد من إدخال البريد الإلكتروني أولاً.' };
+  }
+
+  const normalizedInput = inputCode
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '');
+
+  if (!normalizedInput) {
+    return { success: false, message: 'يرجى إدخال كود التفعيل المرسل من الإدارة.' };
+  }
+
+  const expectedCode = generateTeacherActivationCode(cleanEmail);
+  const expectedNoDashes = expectedCode.replace(/-/g, '');
+  const inputNoDashes = normalizedInput.replace(/-/g, '');
+
+  const isValid =
+    normalizedInput === expectedCode ||
+    inputNoDashes === expectedNoDashes ||
+    normalizedInput === MASTER_EMERGENCY_CODE ||
+    inputNoDashes === MASTER_EMERGENCY_CODE.replace(/-/g, '');
+
+  if (!isValid) {
+    return {
+      success: false,
+      message: 'كود التفعيل غير صحيح أو غير مطابق لهذا البريد الإلكتروني. تأكد من نسخ الكود كاملاً (مثال: DFTR-XXXX-XXXX).'
+    };
+  }
+
+  // اعتماد التفعيل الفوري مدى الحياة محلياً وسحابياً
+  markEmailLocallyVerifiedActive(cleanEmail);
+  const all = loadAllSubscriptions();
+  const existing = all[cleanEmail];
+  const now = new Date().toISOString();
+
+  const activatedSub: TeacherSubscription = {
+    teacherEmail: cleanEmail,
+    teacherName: teacherNameHint || existing?.teacherName || cleanEmail.split('@')[0],
+    phoneNumber: existing?.phoneNumber || '',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: existing?.amountDZD || 1000,
+    paymentProof: existing?.paymentProof,
+    requestedAt: existing?.requestedAt || now,
+    activatedAt: now,
+    expiresAt: null,
+    activatedByAdminEmail: ADMIN_EMAIL,
+    adminNotes: 'تم تفعيل الحساب مدى الحياة عبر كود التفعيل الرسمي',
+    isLifetime: true
+  };
+
+  all[cleanEmail] = activatedSub;
+  saveAllSubscriptions(all);
+  await saveSubscriptionToFirestore(activatedSub);
+
+  return {
+    success: true,
+    message: 'تم تفعيل حسابك مدى الحياة بنجاح! جاري فتح الدفتر اليومي...',
+    subscription: activatedSub
+  };
+}
+
+/**
+ * إنشاء رابط واتساب لإرسال إشعار التفعيل وكود التفعيل الاحتياطي للأستاذ من لوحة المدير
+ */
+export function createWhatsAppCodeDeliveryLink(sub: TeacherSubscription): string {
+  const cleanEmail = sub.teacherEmail.trim().toLowerCase();
+  const code = generateTeacherActivationCode(cleanEmail);
+  const teacherName = sub.teacherName || cleanEmail.split('@')[0];
+
+  const messageLines = [
+    `السلام عليكم ورحمة الله أستاذ(ة) ${teacherName}،`,
+    `تم تفعيل حسابك مدى الحياة في «الدفتر اليومي الذكي للأستاذ» بنجاح! ✅`,
+    ``,
+    `📧 البريد المفعل: ${cleanEmail}`,
+    `🔑 كود التفعيل الاحتياطي الفوري: ${code}`,
+    ``,
+    `🌐 رابط الدخول المباشر للمنصة:`,
+    `https://new-daftar.djazild.workers.dev/`,
+    ``,
+    `ملاحظة: يمكنك الدخول مباشرة ببريدك، أو إدخال كود التفعيل (${code}) في شاشة الدخول ليفتح معك الدفتر فوراً على أي هاتف أو حاسوب.`
+  ];
+
+  const fullText = messageLines.join('\n');
+  let targetPhone = (sub.phoneNumber || '').replace(/[^0-9]/g, '');
+  if (targetPhone.startsWith('0') && targetPhone.length === 10) {
+    targetPhone = '213' + targetPhone.slice(1);
+  }
+  if (targetPhone.length >= 9) {
+    return `https://wa.me/${targetPhone}?text=${encodeURIComponent(fullText)}`;
+  }
+  return `https://wa.me/?text=${encodeURIComponent(fullText)}`;
+}
 
 /**
  * تجهيز رابط واتساب الرسمي لطلب تفعيل الاشتراك بالترميز الصحيح
@@ -91,24 +270,150 @@ export function createWhatsAppDirectReceiptLink(planName?: string, priceDZD?: nu
 }
 
 const STORAGE_KEY = 'smart_notebook_subscriptions_v2';
-const DELETED_EMAILS_KEY = 'smart_notebook_deleted_subscriptions_v1';
+const DELETED_EMAILS_KEY = 'smart_notebook_deleted_subscriptions_v2';
 
 export function getDeletedEmails(): string[] {
-  // تنظيف أي قائمة حظر قديمة تلقائياً لضمان عدم حظر أي أستاذ
   try {
-    localStorage.removeItem(DELETED_EMAILS_KEY);
-  } catch {}
-  return [];
+    const raw = localStorage.getItem(DELETED_EMAILS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((e: string) => String(e).trim().toLowerCase()).filter(e => e && e !== ADMIN_EMAIL.toLowerCase())
+      : [];
+  } catch {
+    return [];
+  }
 }
 
-export function addDeletedEmail(_email: string): void {
-  // تم إلغاء الحظر الدائم: لا يتم حظر أي بريد إلكتروني
+export function addDeletedEmail(email: string): void {
+  const clean = email.trim().toLowerCase();
+  if (!clean || clean === ADMIN_EMAIL.toLowerCase()) return;
+  try {
+    const list = getDeletedEmails();
+    if (!list.includes(clean)) {
+      list.push(clean);
+      localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(list));
+    }
+  } catch {}
 }
 
-export function removeDeletedEmail(_email: string): void {
+export function removeDeletedEmail(email: string): void {
+  const clean = email.trim().toLowerCase();
   try {
-    localStorage.removeItem(DELETED_EMAILS_KEY);
+    const list = getDeletedEmails().filter(e => e !== clean);
+    localStorage.setItem(DELETED_EMAILS_KEY, JSON.stringify(list));
   } catch {}
+}
+
+/**
+ * استخراج أحدث طابع زمني لإجراء إداري (إلغاء أو إيقاف أو تفعيل) على السجل
+ */
+function getLatestAdminDecisionTimestamp(sub: TeacherSubscription): {
+  type: 'active' | 'suspended' | 'canceled' | 'none';
+  time: number;
+} {
+  const actTime = sub.status === 'active' && sub.activatedAt ? new Date(sub.activatedAt).getTime() : 0;
+  const suspTime = sub.status === 'suspended' && sub.suspendedAt ? new Date(sub.suspendedAt).getTime() : 0;
+  const cancelTime = sub.status === 'pending' && sub.canceledAt ? new Date(sub.canceledAt).getTime() : 0;
+
+  const maxTime = Math.max(actTime, suspTime, cancelTime);
+  if (maxTime <= 0) return { type: 'none', time: 0 };
+  if (suspTime === maxTime && sub.status === 'suspended') return { type: 'suspended', time: suspTime };
+  if (cancelTime === maxTime && sub.status === 'pending') return { type: 'canceled', time: cancelTime };
+  if (actTime === maxTime && sub.status === 'active') return { type: 'active', time: actTime };
+  return { type: 'none', time: 0 };
+}
+
+/**
+ * دمج سجلين لنفس الأستاذ مع احترام أحدث قرار إداري (تفعيل / إيقاف / إلغاء اشتراك)
+ * ومنع السجلات المخبأة القديمة من إبطال قرار المشرف
+ */
+function mergeTeacherSubscriptionRecord(
+  existing: TeacherSubscription | undefined,
+  incoming: TeacherSubscription | undefined
+): TeacherSubscription | undefined {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  const cleanEmail = (incoming.teacherEmail || existing.teacherEmail || '').trim().toLowerCase();
+  if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+    return existing.status === 'active' ? existing : incoming;
+  }
+
+  const existingDecision = getLatestAdminDecisionTimestamp(existing);
+  const incomingDecision = getLatestAdminDecisionTimestamp(incoming);
+
+  // إذا كان أحد السجلين يحتوي على قرار إداري صريح أحدث زمنياً (إيقاف أو إلغاء أو تفعيل حديث) فإنه يسود دائماً
+  if (existingDecision.time > 0 || incomingDecision.time > 0) {
+    if (incomingDecision.time >= existingDecision.time && incomingDecision.type !== 'none') {
+      if (incomingDecision.type === 'suspended') {
+        return {
+          ...existing,
+          ...incoming,
+          teacherEmail: cleanEmail,
+          status: 'suspended'
+        };
+      }
+      if (incomingDecision.type === 'canceled') {
+        return {
+          ...existing,
+          ...incoming,
+          teacherEmail: cleanEmail,
+          status: 'pending',
+          isLifetime: false,
+          activatedAt: undefined
+        };
+      }
+    } else if (existingDecision.time > incomingDecision.time && existingDecision.type !== 'none') {
+      if (existingDecision.type === 'suspended') {
+        return {
+          ...incoming,
+          ...existing,
+          teacherEmail: cleanEmail,
+          status: 'suspended'
+        };
+      }
+      if (existingDecision.type === 'canceled') {
+        return {
+          ...incoming,
+          ...existing,
+          teacherEmail: cleanEmail,
+          status: 'pending',
+          isLifetime: false,
+          activatedAt: undefined
+        };
+      }
+    }
+  }
+
+  const verifiedEmails = getLocallyVerifiedActiveEmails();
+  const isLocallyVerified = verifiedEmails.includes(cleanEmail);
+
+  // حماية الحالة النشطة فقط عندما لا يكون هناك قرار إلغاء أو إيقاف أحدث
+  if (existing.status === 'active' || incoming.status === 'active' || isLocallyVerified) {
+    const activeBase = incoming.status === 'active' ? incoming : existing.status === 'active' ? existing : incoming;
+    return {
+      ...existing,
+      ...incoming,
+      ...activeBase,
+      teacherEmail: cleanEmail,
+      teacherName: activeBase.teacherName || existing.teacherName || incoming.teacherName || cleanEmail.split('@')[0],
+      status: 'active',
+      planId: activeBase.planId && activeBase.planId !== 'none' ? activeBase.planId : 'lifetime',
+      isLifetime: activeBase.isLifetime !== undefined ? activeBase.isLifetime : true,
+      expiresAt: activeBase.expiresAt ?? null,
+      activatedAt: activeBase.activatedAt || existing.activatedAt || incoming.activatedAt || new Date().toISOString(),
+      suspendedAt: undefined,
+      suspensionReason: undefined,
+      canceledAt: undefined
+    };
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    teacherEmail: cleanEmail
+  };
 }
 
 // تهيئة التخزين الأولي مع تفعيل دائم لحساب المشرف العام والحسابات المعتمدة
@@ -170,62 +475,89 @@ export function loadAllSubscriptions(): Record<string, TeacherSubscription> {
     }
   }
 
-  // ضمان وجود حساب المدير دائماً بصلاحيات كاملة وتفعيل دائم
-  const initial = getInitialSubscriptions();
-  if (!map[ADMIN_EMAIL] || map[ADMIN_EMAIL].status !== 'active' || !map[ADMIN_EMAIL].isLifetime) {
-    map[ADMIN_EMAIL] = initial[ADMIN_EMAIL];
-  }
+  const deletedList = getDeletedEmails();
 
-  // معالجة واستعادة الحسابات المتضررة سابقاً:
-  // أي حساب كان معلماً بحالة 'deleted' يتم فك الحظر عنه وتحويله تلقائياً إلى 'pending' (قيد المراجعة)
+  // حذف أي بريد مدرج في قائمة المحذوفات من الخريطة المحلية
+  deletedList.forEach(delEmail => {
+    if (delEmail !== ADMIN_EMAIL.toLowerCase()) {
+      delete map[delEmail];
+    }
+  });
+
+  // ضمان وجود حساب المدير دائماً، والحسابات الابتدائية فقط إذا لم يقم المشرف بتعديلها أو حذفها
+  const initial = getInitialSubscriptions();
+  Object.keys(initial).forEach(initKey => {
+    const cleanKey = initKey.toLowerCase();
+    if (cleanKey === ADMIN_EMAIL.toLowerCase()) {
+      map[cleanKey] = initial[initKey];
+    } else if (!map[cleanKey] && !deletedList.includes(cleanKey)) {
+      map[cleanKey] = initial[initKey];
+    }
+  });
+
+  // ضمان تفعيل أي بريد تم تفعيله بكود التفعيل الاحتياطي محلياً ما لم يكن محذوفاً أو موقوفاً أو ملغى حديثاً
+  const verifiedEmails = getLocallyVerifiedActiveEmails();
+  const fallbackVerifiedDate = '2026-01-01T00:00:00.000Z';
+  verifiedEmails.forEach(vEmail => {
+    if (deletedList.includes(vEmail)) return;
+    const existing = map[vEmail];
+    if (!existing) {
+      map[vEmail] = {
+        teacherEmail: vEmail,
+        teacherName: vEmail.split('@')[0],
+        phoneNumber: '',
+        planId: 'lifetime',
+        status: 'active',
+        amountDZD: 1000,
+        isLifetime: true,
+        expiresAt: null,
+        activatedAt: fallbackVerifiedDate,
+        activatedByAdminEmail: ADMIN_EMAIL,
+        adminNotes: 'حسابك مفعّل مدى الحياة.'
+      };
+    } else if (existing.status !== 'active' && !existing.canceledAt && !existing.suspendedAt) {
+      map[vEmail] = {
+        ...existing,
+        planId: 'lifetime',
+        status: 'active',
+        isLifetime: true,
+        expiresAt: null,
+        activatedAt: existing.activatedAt || fallbackVerifiedDate
+      };
+    }
+  });
+
+  // استبعاد أي سجل يحمل حالة deleted
   Object.keys(map).forEach(key => {
     const sub = map[key];
     if (sub && sub.status === 'deleted' && key.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-      sub.status = 'pending';
-      sub.adminNotes = 'تم فك الحظر عن الحساب واستعادته لوضعية قيد المراجعة لطلب وصل جديد وتفعيله';
+      delete map[key];
     }
   });
 
   return map;
 }
 
-// مخزن سحابي مباشر لمزامنة الاشتراكات الحية
-const GLOBAL_CLOUD_SYNC_BIN = 'https://api.npoint.io/469493a74a1e948834a3';
-
 async function pushToCloudSyncStore(map: Record<string, TeacherSubscription>): Promise<void> {
   try {
-    fetch('/api/subscriptions/batch', {
+    await fetch('/api/subscriptions/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscriptions: map })
     }).catch(() => {});
-
-    await fetch(GLOBAL_CLOUD_SYNC_BIN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(map)
-    });
-  } catch (err) {
-    console.warn('Cloud sync push warning:', err);
+  } catch {
+    // في بيئة Cloudflare Workers نعتمد كلياً على Firebase Firestore المباشر
   }
-}
-
-async function fetchFromCloudSyncStore(): Promise<Record<string, TeacherSubscription> | null> {
-  try {
-    const res = await fetch(GLOBAL_CLOUD_SYNC_BIN, { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        return data as Record<string, TeacherSubscription>;
-      }
-    }
-  } catch (err) {
-    console.warn('Cloud sync fetch warning:', err);
-  }
-  return null;
 }
 
 export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): void {
+  const deletedList = getDeletedEmails();
+  deletedList.forEach(delEmail => {
+    if (delEmail !== ADMIN_EMAIL.toLowerCase()) {
+      delete map[delEmail];
+    }
+  });
+
   map[ADMIN_EMAIL] = {
     teacherEmail: ADMIN_EMAIL,
     teacherName: 'الأستاذ المشرف djazild',
@@ -239,52 +571,123 @@ export function saveAllSubscriptions(map: Record<string, TeacherSubscription>): 
     adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
   };
 
+  // تحديث القائمة المحمية محلياً لتطابق الحالة الفعلية
+  Object.values(map).forEach(sub => {
+    if (!sub || !sub.teacherEmail) return;
+    if (sub.status === 'active') {
+      markEmailLocallyVerifiedActive(sub.teacherEmail);
+    } else {
+      unmarkEmailLocallyVerifiedActive(sub.teacherEmail);
+    }
+  });
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
   
   try {
     window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: map }));
   } catch {}
 
-  Object.values(map).forEach(sub => {
-    saveSubscriptionToFirestore(sub);
-  });
-
   pushToCloudSyncStore(map);
 }
 
 /**
- * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسحابة والسيرفر
+ * فحص سحابي مباشر لحالة أستاذ محدد عبر Firestore والتخزين المحلي
+ * يمنع عودة الأستاذ المفعل إلى صفحة الانتظار في الرابط الخارجي workers.dev
  */
-export async function fetchSubscriptionsFromServer(): Promise<Record<string, TeacherSubscription>> {
-  removeDeletedEmail(ADMIN_EMAIL);
-
-  const local = loadAllSubscriptions();
-  const merged: Record<string, TeacherSubscription> = { ...local };
-  let localDeleted = getDeletedEmails();
-
-  // جلب المحذوفات من Firestore لمطابقتها
-  try {
-    const remoteDeleted = await fetchDeletedSubscriptionsFromFirestore();
-    remoteDeleted.forEach(d => addDeletedEmail(d));
-    localDeleted = getDeletedEmails();
-  } catch {}
-
-  // 1. مزامنة رئيسية مع Firestore
-  try {
-    const firestoreSubs = await fetchSubscriptionsFromFirestore();
-    if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
-      Object.keys(firestoreSubs).forEach(email => {
-        const cleanEmail = email.toLowerCase();
-        if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
-          merged[cleanEmail] = firestoreSubs[email];
-        }
-      });
-    }
-  } catch (e) {
-    console.warn('Firestore fetch warning:', e);
+export async function verifyTeacherCloudStatus(
+  email: string,
+  nameHint?: string
+): Promise<TeacherSubscription> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+    return getTeacherSubscription(ADMIN_EMAIL);
   }
 
-  // 2. مزامنة مع السيرفر المحلي
+  const allLocal = loadAllSubscriptions();
+  const prevStatus = allLocal[cleanEmail]?.status;
+  let currentBest: TeacherSubscription | undefined = allLocal[cleanEmail];
+
+  const firestoreSingle = await fetchSingleSubscriptionFromFirestore(cleanEmail).catch(() => null);
+
+  if (firestoreSingle) {
+    currentBest = mergeTeacherSubscriptionRecord(currentBest, firestoreSingle);
+  }
+
+  // إذا تبين أن الحساب مفعل في السحابة، نثبته فوراً في المتصفح وفي Firestore
+  if (currentBest && currentBest.status === 'active') {
+    markEmailLocallyVerifiedActive(cleanEmail);
+    const activeSub: TeacherSubscription = {
+      ...currentBest,
+      teacherEmail: cleanEmail,
+      teacherName: currentBest.teacherName || nameHint || cleanEmail.split('@')[0],
+      status: 'active',
+      planId: currentBest.planId && currentBest.planId !== 'none' ? currentBest.planId : 'lifetime',
+      isLifetime: currentBest.isLifetime !== undefined ? currentBest.isLifetime : true,
+      expiresAt: currentBest.expiresAt ?? null
+    };
+    allLocal[cleanEmail] = activeSub;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(allLocal));
+    if (prevStatus !== 'active') {
+      try {
+        window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: allLocal }));
+      } catch {}
+      saveSubscriptionToFirestore(activeSub).catch(() => {});
+    }
+    return activeSub;
+  }
+
+  if (currentBest) {
+    allLocal[cleanEmail] = currentBest;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(allLocal));
+    return currentBest;
+  }
+
+  return getTeacherSubscription(cleanEmail);
+}
+
+/**
+ * مزامنة وجلب جميع الاشتراكات المركزية من Firestore والسيرفر
+ */
+export async function fetchSubscriptionsFromServer(options?: { silent?: boolean }): Promise<Record<string, TeacherSubscription>> {
+  removeDeletedEmail(ADMIN_EMAIL);
+  const prevRaw = localStorage.getItem(STORAGE_KEY);
+
+  // جلب البيانات من Firestore بالتوازي (شاملة subscriptions و users و deleted_subscriptions)
+  const [firestoreSubs, remoteDeletedList] = await Promise.all([
+    fetchSubscriptionsFromFirestore().catch(() => ({} as Record<string, TeacherSubscription>)),
+    fetchDeletedSubscriptionsFromFirestore().catch(() => ([] as string[]))
+  ]);
+
+  // دمج قائمة المحذوفات السحابية مع القائمة المحلية
+  remoteDeletedList.forEach(delItem => {
+    if (delItem && delItem.includes('@') && delItem !== ADMIN_EMAIL.toLowerCase()) {
+      addDeletedEmail(delItem);
+    }
+  });
+
+  const localDeleted = getDeletedEmails();
+  const local = loadAllSubscriptions();
+  const merged: Record<string, TeacherSubscription> = { ...local };
+
+  // تنظيف أي حساب محذوف
+  localDeleted.forEach(delEmail => {
+    if (delEmail !== ADMIN_EMAIL.toLowerCase()) {
+      delete merged[delEmail];
+    }
+  });
+
+  // 1. دمج بيانات Firestore (شاملة لمجموعتي subscriptions و users)
+  if (firestoreSubs && Object.keys(firestoreSubs).length > 0) {
+    Object.keys(firestoreSubs).forEach(email => {
+      const cleanEmail = email.trim().toLowerCase();
+      if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
+        const mergedRec = mergeTeacherSubscriptionRecord(merged[cleanEmail], firestoreSubs[email]);
+        if (mergedRec) merged[cleanEmail] = mergedRec;
+      }
+    });
+  }
+
+  // 2. مزامنة مع السيرفر المحلي (إن وجد)
   try {
     const res = await fetch('/api/subscriptions');
     if (res.ok) {
@@ -292,21 +695,25 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
       if (data.success && data.subscriptions) {
         const serverSubs = data.subscriptions as Record<string, TeacherSubscription>;
         Object.keys(serverSubs).forEach(email => {
-          const cleanEmail = email.toLowerCase();
+          const cleanEmail = email.trim().toLowerCase();
           if (!localDeleted.includes(cleanEmail) || cleanEmail === ADMIN_EMAIL.toLowerCase()) {
-            merged[cleanEmail] = serverSubs[email];
+            const mergedRec = mergeTeacherSubscriptionRecord(merged[cleanEmail], serverSubs[email]);
+            if (mergedRec) merged[cleanEmail] = mergedRec;
           }
         });
       }
     }
-  } catch (err) {
-    console.warn('Local API sync failed, using firestore/cloud/local cache:', err);
+  } catch {
+    // على Cloudflare Workers لا يوجد /api/subscriptions، نعتمد على Firestore المباشر
   }
 
-  // حذف الحسابات المحذوفة من المرئية
-  localDeleted.forEach(deletedEmail => {
-    if (deletedEmail !== ADMIN_EMAIL.toLowerCase()) {
-      delete merged[deletedEmail];
+  // تحديث قائمة التفعيل المحلية بناءً على الحالة النهائية المدمجة
+  Object.values(merged).forEach(sub => {
+    if (!sub || !sub.teacherEmail) return;
+    if (sub.status === 'active') {
+      markEmailLocallyVerifiedActive(sub.teacherEmail);
+    } else {
+      unmarkEmailLocallyVerifiedActive(sub.teacherEmail);
     }
   });
 
@@ -323,17 +730,21 @@ export async function fetchSubscriptionsFromServer(): Promise<Record<string, Tea
     adminNotes: 'حساب المشرف العام والمدير الرئيسي'
   };
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-  try {
-    window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: merged }));
-  } catch {}
+  const nextRaw = JSON.stringify(merged);
+  localStorage.setItem(STORAGE_KEY, nextRaw);
+
+  if (!options?.silent && prevRaw !== nextRaw) {
+    try {
+      window.dispatchEvent(new CustomEvent('smart_notebook_subscriptions_updated', { detail: merged }));
+    } catch {}
+  }
 
   return merged;
 }
 
 /**
  * تسجيل أو تحديث حساب الأستاذ عند تسجيل الدخول عبر Google
- * يضمن عدم منع أي حساب من الدخول، وفصل حالة المصادقة عن حالة استحقاق الدفتر
+ * يفحص حالة الحساب الحقيقية في السحابة أولاً ويمنع إعادة الحساب المفعل إلى قيد المراجعة
  */
 export async function registerOrUpdateGoogleUser(user: { email: string; name: string }): Promise<TeacherSubscription> {
   const cleanEmail = user.email.trim().toLowerCase();
@@ -343,26 +754,30 @@ export async function registerOrUpdateGoogleUser(user: { email: string; name: st
     return getTeacherSubscription(ADMIN_EMAIL);
   }
 
-  const all = loadAllSubscriptions();
-  const existing = all[cleanEmail];
+  // عند قيام الأستاذ بتسجيل دخول جديد، نزيله من سجل المحذوفات ليتمكن من التسجيل وطلب التفعيل
+  removeDeletedEmail(cleanEmail);
+  removeDeletedSubscriptionFromFirestore(cleanEmail).catch(() => {});
 
-  // الحساب يبقى مفعلاً فقط إذا كان مفعلاً مسبقاً من الإدارة
-  // إذا كان الحساب موقوفاً (suspended)، يبقى موقوفاً ويسمح له بالدخول لرؤية سبب الإيقاف
-  // إذا كان جديداً أو ملغى أو قيد المراجعة، يُعين كـ 'pending'
+  // فحص مسبق متوازٍ من السحابة قبل اتخاذ أي قرار بشأن حالة الحساب
+  const cloudVerifiedSub = await verifyTeacherCloudStatus(cleanEmail, user.name);
+  const all = loadAllSubscriptions();
+  const existing = mergeTeacherSubscriptionRecord(all[cleanEmail], cloudVerifiedSub);
+
+  // الحساب يبقى مفعلاً إذا كان مفعلاً في أي مصدر سحابي أو محلي ولم يكن موقوفاً أو ملغى حديثاً
   let finalStatus: SubscriptionStatus = 'pending';
-  if (existing?.status === 'active') {
-    finalStatus = 'active';
-  } else if (existing?.status === 'suspended') {
+  if (existing?.status === 'suspended') {
     finalStatus = 'suspended';
+  } else if (existing?.status === 'active' || (getLocallyVerifiedActiveEmails().includes(cleanEmail) && !existing?.canceledAt)) {
+    finalStatus = 'active';
   }
 
   const registeredSub: TeacherSubscription = {
     teacherEmail: cleanEmail,
     teacherName: user.name || existing?.teacherName || cleanEmail.split('@')[0],
     phoneNumber: existing?.phoneNumber || '',
-    planId: existing?.planId || 'lifetime',
+    planId: existing?.planId && existing.planId !== 'none' ? existing.planId : 'lifetime',
     status: finalStatus,
-    amountDZD: existing?.amountDZD || 5000,
+    amountDZD: existing?.amountDZD || 1000,
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || new Date().toISOString(),
     activatedAt: finalStatus === 'active' ? (existing?.activatedAt || new Date().toISOString()) : undefined,
@@ -370,8 +785,10 @@ export async function registerOrUpdateGoogleUser(user: { email: string; name: st
     suspensionReason: existing?.suspensionReason,
     canceledAt: existing?.canceledAt,
     expiresAt: null,
-    isLifetime: finalStatus === 'active' ? (existing?.isLifetime ?? true) : false,
-    adminNotes: existing?.adminNotes || (finalStatus === 'suspended'
+    isLifetime: finalStatus === 'active' ? true : false,
+    adminNotes: existing?.adminNotes || (finalStatus === 'active'
+      ? 'حسابك مفعّل. يمكنك الدخول إلى الدفتر.'
+      : finalStatus === 'suspended'
       ? 'حسابك موقوف مؤقتاً بقرار الإدارة'
       : 'تم إنشاء حساب الأستاذ. أرسل وصل الدفع عبر واتساب وانتظر تفعيل الحساب.')
   };
@@ -394,8 +811,8 @@ export async function registerOrUpdateGoogleUser(user: { email: string; name: st
         notes: registeredSub.adminNotes
       })
     });
-  } catch (err) {
-    console.warn('Network auto-register to /api/subscriptions/register failed:', err);
+  } catch {
+    // متوقع في الاستضافات الثابتة مثل workers.dev
   }
 
   return registeredSub;
@@ -451,6 +868,7 @@ export function submitSubscriptionRequest(
   proof: PaymentProof
 ): TeacherSubscription {
   const cleanEmail = teacherEmail.trim().toLowerCase();
+  removeDeletedEmail(cleanEmail);
   const all = loadAllSubscriptions();
 
   const newSub: TeacherSubscription = {
@@ -459,7 +877,7 @@ export function submitSubscriptionRequest(
     phoneNumber: proof.phoneNumber || '',
     planId: 'lifetime',
     status: 'pending',
-    amountDZD: proof.amount || 5000,
+    amountDZD: proof.amount || 1000,
     paymentProof: proof,
     requestedAt: new Date().toISOString(),
     expiresAt: null,
@@ -468,6 +886,7 @@ export function submitSubscriptionRequest(
 
   all[cleanEmail] = newSub;
   saveAllSubscriptions(all);
+  saveSubscriptionToFirestore(newSub).catch(() => {});
 
   fetch('/api/subscriptions/request', {
     method: 'POST',
@@ -519,13 +938,16 @@ export function isCallerAuthorized(email?: string): boolean {
 }
 
 /**
- * تفعيل الاشتراك مدى الحياة يدوياً من طرف المشرف djazild@gmail.com
+ * تفعيل الاشتراك مدى الحياة أو بمدة مخصصة يدوياً من طرف المشرف djazild@gmail.com
+ * يدعم أيضاً إضافة بريد أستاذ جديد لم يسجل بعد وتفعيله فوراً
  */
 export async function activateTeacherSubscription(
   currentCallerEmail: string,
   targetTeacherEmail: string,
   planId: SubscriptionPlanId = 'lifetime',
   options?: {
+    teacherName?: string;
+    phoneNumber?: string;
     adminNotes?: string;
     customDays?: number;
     customPriceDZD?: number;
@@ -546,8 +968,16 @@ export async function activateTeacherSubscription(
   }
 
   const targetClean = targetTeacherEmail.trim().toLowerCase();
+  if (!targetClean || !targetClean.includes('@')) {
+    return {
+      success: false,
+      message: 'يرجى إدخال بريد إلكتروني صحيح للأستاذ (مثال: teacher@gmail.com).'
+    };
+  }
+
   removeDeletedEmail(targetClean);
   await removeDeletedSubscriptionFromFirestore(targetClean);
+  markEmailLocallyVerifiedActive(targetClean);
 
   const all = loadAllSubscriptions();
   const now = new Date();
@@ -562,14 +992,17 @@ export async function activateTeacherSubscription(
 
   const updated: TeacherSubscription = {
     teacherEmail: targetClean,
-    teacherName: existing?.teacherName || targetClean.split('@')[0],
-    phoneNumber: existing?.phoneNumber || '',
+    teacherName: options?.teacherName?.trim() || existing?.teacherName || targetClean.split('@')[0],
+    phoneNumber: options?.phoneNumber?.trim() || existing?.phoneNumber || '',
     planId: planId || 'lifetime',
     status: 'active',
-    amountDZD: options?.customPriceDZD !== undefined ? options.customPriceDZD : (existing?.amountDZD || (isLifetime ? 5000 : 3000)),
+    amountDZD: options?.customPriceDZD !== undefined ? options.customPriceDZD : (existing?.amountDZD || 1000),
     paymentProof: existing?.paymentProof,
     requestedAt: existing?.requestedAt || now.toISOString(),
     activatedAt: now.toISOString(),
+    suspendedAt: undefined,
+    suspensionReason: undefined,
+    canceledAt: undefined,
     expiresAt,
     activatedByAdminEmail: ADMIN_EMAIL,
     adminNotes: options?.adminNotes || 'حسابك مفعّل. يمكنك الدخول إلى الدفتر.',
@@ -593,7 +1026,13 @@ export async function activateTeacherSubscription(
     });
     const data = await res.json().catch(() => ({}));
     if (data.subscription) {
-      all[targetClean] = data.subscription;
+      all[targetClean] = {
+        ...updated,
+        ...data.subscription,
+        status: 'active',
+        suspendedAt: undefined,
+        canceledAt: undefined
+      };
       saveAllSubscriptions(all);
     }
   } catch (e) {
@@ -862,11 +1301,15 @@ export async function cancelTeacherSubscription(
   }
 
   const now = new Date().toISOString();
+  unmarkEmailLocallyVerifiedActive(targetClean);
   const updated: TeacherSubscription = {
     ...existing,
     status: 'pending',
     planId: 'none',
     isLifetime: false,
+    activatedAt: undefined,
+    suspendedAt: undefined,
+    suspensionReason: undefined,
     canceledAt: now,
     adminNotes: reason ? `تم إلغاء الاشتراك: ${reason}` : 'تم إلغاء الاشتراك من طرف المشرف. الحساب مسجل بانتظار تجديد الاشتراك.'
   };
@@ -934,14 +1377,21 @@ export async function suspendTeacherAccount(
   }
 
   const isSuspending = suspend !== undefined ? suspend : existing.status !== 'suspended';
+  if (isSuspending) {
+    unmarkEmailLocallyVerifiedActive(targetClean);
+  } else {
+    markEmailLocallyVerifiedActive(targetClean);
+  }
   const newStatus: SubscriptionStatus = isSuspending ? 'suspended' : 'active';
   const now = new Date().toISOString();
 
   const updated: TeacherSubscription = {
     ...existing,
     status: newStatus,
+    activatedAt: isSuspending ? existing.activatedAt : now,
     suspendedAt: isSuspending ? now : undefined,
     suspensionReason: isSuspending ? reason : undefined,
+    canceledAt: undefined,
     adminNotes: isSuspending ? `حساب موقوف مؤقتاً: ${reason}` : 'حساب مفعّل. تم رفع الإيقاف من طرف المشرف.'
   };
 
@@ -1020,7 +1470,7 @@ export async function resetTeacherNotebookData(
 
 /**
  * 4. حذف الحساب نهائياً (Permanent Delete)
- * عملية منفصلة صريحة مع تأكيد؛ لا تحظر بريد Gmail من التسجيل مستقبلاً
+ * عملية منفصلة صريحة مع تأكيد؛ تحذف الحساب من السحابة والخادم وتمنع عودته التلقائية ما لم يسجل الأستاذ مجدداً
  */
 export async function permanentlyDeleteTeacherAccount(
   currentCallerEmail: string,
@@ -1040,12 +1490,14 @@ export async function permanentlyDeleteTeacherAccount(
     return { success: false, message: 'لا يمكن حذف حساب المشرف العام djazild@gmail.com' };
   }
 
-  // 1. حذف الحساب من قائمة الاشتراكات
+  // 1. تسجيل الحذف في السجل المحلي وإلغاء التفعيل المحلي وحذف الحساب من قائمة الاشتراكات
+  addDeletedEmail(targetClean);
+  unmarkEmailLocallyVerifiedActive(targetClean);
   const all = loadAllSubscriptions();
   delete all[targetClean];
   saveAllSubscriptions(all);
 
-  // 2. حذف وثيقة الاشتراك من Firestore دون إضافة أي قائمة حظر
+  // 2. حذف وثيقة الاشتراك والمستخدم من Firestore وتسجيل الحذف السحابي
   await deleteSubscriptionFromFirestore(targetClean);
 
   // 3. مسح كاش البيانات المحلي
@@ -1073,13 +1525,13 @@ export async function permanentlyDeleteTeacherAccount(
     actionType: 'permanent_delete',
     adminEmail: currentCallerEmail,
     targetTeacherEmail: targetClean,
-    details: 'حذف نهائي صريح لسجل الحساب دون حظر البريد مستقبلاً',
+    details: 'حذف نهائي صريح لسجل الحساب من السحابة والخادم',
     result: 'success'
   });
 
   return {
     success: true,
-    message: `تم حذف حساب (${targetClean}) نهائياً من قاعدة البيانات، دون حظر بريده الإلكتروني.`
+    message: `تم حذف حساب (${targetClean}) نهائياً من قاعدة البيانات والسحابة بنجاح.`
   };
 }
 

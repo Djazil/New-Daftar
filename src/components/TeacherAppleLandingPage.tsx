@@ -1,14 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2, Sparkles, Smartphone, ShieldCheck, ArrowLeft,
   ChevronDown, ChevronUp, Copy, Check, MessageCircle, ExternalLink,
-  Users, Award, AlertTriangle, Clock, X, Lock, CreditCard, Send, HeartHandshake, Eye
+  Users, Award, AlertTriangle, Clock, X, Lock, CreditCard, Send, HeartHandshake, Eye,
+  KeyRound, RefreshCw
 } from 'lucide-react';
 import {
   BARIDIMOB_CONFIG,
   WHATSAPP_CONTACT_NUMBER,
   createWhatsAppActivationLink,
-  createWhatsAppDirectReceiptLink
+  createWhatsAppDirectReceiptLink,
+  verifyTeacherCloudStatus,
+  verifyAndRedeemActivationCode,
+  subscribeToTeacherSubscriptionInFirestore,
+  markEmailLocallyVerifiedActive,
+  loadAllSubscriptions
 } from '../services/subscriptionService';
 import { AuthUser, TeacherSubscription } from '../types';
 
@@ -29,6 +35,7 @@ interface TeacherAppleLandingPageProps {
   onRequestActivation: (phoneNumber: string, note?: string) => Promise<boolean>;
   onLogout: () => void;
   onRefreshSubscriptionStatus?: () => void;
+  onOpenAdminPanel?: () => void;
 }
 
 interface ImageWithFallbackProps {
@@ -128,7 +135,8 @@ export default function TeacherAppleLandingPage({
   currentSubscription,
   onRequestActivation,
   onLogout,
-  onRefreshSubscriptionStatus
+  onRefreshSubscriptionStatus,
+  onOpenAdminPanel
 }: TeacherAppleLandingPageProps) {
   // حالات النوافذ المنبثقة
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -146,9 +154,105 @@ export default function TeacherAppleLandingPage({
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [previewImageModal, setPreviewImageModal] = useState<string | null>(null);
 
+  // حالات التفعيل الفوري بالكود الاحتياطي والتحقق السحابي المباشر
+  const [activationCodeInput, setActivationCodeInput] = useState('');
+  const [isRedeemingCode, setIsRedeemingCode] = useState(false);
+  const [isCheckingCloud, setIsCheckingCloud] = useState(false);
+  const [activationFeedback, setActivationFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
   const teacherName = currentUser?.name || 'الأستاذ الفاضل';
   const teacherEmail = currentUser?.email || '';
   const isPending = currentSubscription?.status === 'pending';
+
+  // استماع لحظي وفحص سحابي تلقائي لفتح الدفتر فوراً إذا كان الأستاذ مفعلاً
+  useEffect(() => {
+    if (!teacherEmail) return;
+    let isMounted = true;
+
+    const checkCloudNow = async () => {
+      try {
+        const verified = await verifyTeacherCloudStatus(teacherEmail, teacherName);
+        if (isMounted && verified.status === 'active') {
+          if (onRefreshSubscriptionStatus) onRefreshSubscriptionStatus();
+        }
+      } catch {}
+    };
+
+    checkCloudNow();
+
+    // مستمع حي لوثيقة الأستاذ في Firestore
+    const unsub = subscribeToTeacherSubscriptionInFirestore(teacherEmail, (liveSub) => {
+      if (!isMounted || !liveSub) return;
+      if (liveSub.status === 'active') {
+        markEmailLocallyVerifiedActive(teacherEmail);
+        const all = loadAllSubscriptions();
+        all[teacherEmail.trim().toLowerCase()] = {
+          ...liveSub,
+          teacherEmail: teacherEmail.trim().toLowerCase(),
+          status: 'active',
+          isLifetime: true
+        };
+        localStorage.setItem('smart_notebook_subscriptions_v2', JSON.stringify(all));
+        if (onRefreshSubscriptionStatus) onRefreshSubscriptionStatus();
+      }
+    });
+
+    // فحص دوري كل 8 ثوانٍ لضمان الالتقاط حتى في المتصفحات المقيدة
+    const interval = setInterval(checkCloudNow, 8000);
+
+    return () => {
+      isMounted = false;
+      unsub();
+      clearInterval(interval);
+    };
+  }, [teacherEmail, teacherName]);
+
+  const handleManualCloudCheck = async () => {
+    if (!teacherEmail) return;
+    setIsCheckingCloud(true);
+    setActivationFeedback(null);
+    try {
+      const sub = await verifyTeacherCloudStatus(teacherEmail, teacherName);
+      if (sub.status === 'active') {
+        setActivationFeedback({
+          text: '✓ تم التأكد من تفعيل حسابك في السحابة! جاري فتح الدفتر اليومي...',
+          type: 'success'
+        });
+        if (onRefreshSubscriptionStatus) onRefreshSubscriptionStatus();
+      } else {
+        setActivationFeedback({
+          text: 'حسابك لا يزال قيد المراجعة حالياً. إذا استلمت كود التفعيل من الإدارة، أدخله في الخانة أدناه للفتح الفوري.',
+          type: 'error'
+        });
+      }
+    } catch {
+      setActivationFeedback({
+        text: 'تعذر الوصول للسحابة حالياً. يمكنك استخدام كود التفعيل الاحتياطي للفتح الفوري دون انتظار.',
+        type: 'error'
+      });
+    } finally {
+      setIsCheckingCloud(false);
+    }
+  };
+
+  const handleRedeemBackupCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activationCodeInput.trim()) return;
+    setIsRedeemingCode(true);
+    setActivationFeedback(null);
+    try {
+      const res = await verifyAndRedeemActivationCode(teacherEmail, activationCodeInput, teacherName);
+      if (res.success) {
+        setActivationFeedback({ text: res.message, type: 'success' });
+        setActivationCodeInput('');
+        if (onRefreshSubscriptionStatus) onRefreshSubscriptionStatus();
+      } else {
+        setActivationFeedback({ text: res.message, type: 'error' });
+      }
+    } finally {
+      setIsRedeemingCode(false);
+    }
+  };
 
   const handleCopyRip = () => {
     navigator.clipboard.writeText(BARIDIMOB_CONFIG.ripNumber);
@@ -268,21 +372,33 @@ export default function TeacherAppleLandingPage({
             theme="dark"
           />
 
-          <div className="flex items-center gap-2.5">
-            <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-300 border border-blue-500/20">
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            <span className="hidden md:inline-flex px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-300 border border-blue-500/20">
               وصول دائم — 1000 دج
             </span>
 
+            {onOpenAdminPanel && (
+              <button
+                type="button"
+                onClick={onOpenAdminPanel}
+                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                title="فتح لوحة تحكم المشرف"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>لوحة المشرف</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsPaymentModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/25 transition active:scale-95 whitespace-nowrap"
+              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/25 transition active:scale-95 whitespace-nowrap cursor-pointer"
             >
               تفعيل الدفتر
             </button>
 
             <button
               onClick={onLogout}
-              className="p-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition text-xs font-bold"
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition text-xs font-bold cursor-pointer"
               title="تسجيل الخروج"
             >
               خروج
@@ -342,6 +458,68 @@ export default function TeacherAppleLandingPage({
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-blue-400" /> تفعيل سريع عبر BaridiMob
             </span>
+          </div>
+
+          {/* =========================================================
+              بطاقة التفعيل المزدوج الفوري (التحقق السحابي + كود التفعيل الاحتياطي)
+          ========================================================= */}
+          <div className="max-w-2xl mx-auto mt-4 p-4 sm:p-5 rounded-3xl bg-slate-900/95 border border-emerald-500/30 shadow-2xl text-right space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-white">هل تم تفعيل حسابك من الإدارة أو لديك كود تفعيل؟</h3>
+                  <p className="text-[11px] text-slate-400 font-mono">{teacherEmail}</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleManualCloudCheck}
+                disabled={isCheckingCloud}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingCloud ? 'animate-spin text-emerald-400' : ''}`} />
+                <span>{isCheckingCloud ? 'جاري التحقق من السحابة...' : 'تحقق من التفعيل الآن'}</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleRedeemBackupCode} className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={activationCodeInput}
+                onChange={e => {
+                  setActivationCodeInput(e.target.value.toUpperCase());
+                  if (activationFeedback) setActivationFeedback(null);
+                }}
+                placeholder="أدخل كود التفعيل الاحتياطي هنا (مثال: DFTR-XXXX-XXXX)"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-emerald-300 text-xs font-mono tracking-wider uppercase dir-ltr text-center sm:text-left focus:outline-none focus:border-emerald-500"
+              />
+              <button
+                type="submit"
+                disabled={isRedeemingCode || !activationCodeInput.trim()}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg shadow-emerald-600/25 transition cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                {isRedeemingCode ? 'جاري التفعيل...' : 'تفعيل وفتح الدفتر فوراً'}
+              </button>
+            </form>
+
+            {activationFeedback && (
+              <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                activationFeedback.type === 'success'
+                  ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                  : 'bg-amber-950/60 border border-amber-500/40 text-amber-200'
+              }`}>
+                {activationFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                )}
+                <span>{activationFeedback.text}</span>
+              </div>
+            )}
           </div>
 
           {/* =========================================================

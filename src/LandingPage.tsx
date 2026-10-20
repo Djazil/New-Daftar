@@ -17,13 +17,14 @@ import previewGradesImg from './assets/preview_grades.svg';
 import BrandLogo from './components/BrandLogo';
 import {
   BARIDIMOB_CONFIG, WHATSAPP_CONTACT_NUMBER, WHATSAPP_INTL_NUMBER,
-  ADMIN_EMAIL, createWhatsAppDirectReceiptLink
+  ADMIN_EMAIL, createWhatsAppDirectReceiptLink,
+  registerOrUpdateGoogleUser, verifyAndRedeemActivationCode
 } from './services/subscriptionService';
-import { saveSubscriptionToFirestore } from './services/firebaseSubscriptionService';
 
 interface LandingPageProps {
   classes: ClassGroup[];
   onGoogleSignIn: (user: AuthUser) => void;
+  onOpenAdminPanel?: () => void;
 }
 
 export const ADMIN_USER: AuthUser = {
@@ -34,7 +35,7 @@ export const ADMIN_USER: AuthUser = {
   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'
 };
 
-export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProps) {
+export default function LandingPage({ classes, onGoogleSignIn, onOpenAdminPanel }: LandingPageProps) {
   // التبويب الرئيسي: "قسم الأساتذة" أو "فضاء الأولياء"
   const [activeTab, setActiveTab] = useState<'teachers' | 'parents'>('teachers');
 
@@ -48,11 +49,16 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
   const [showGoogleModal, setShowGoogleModal] = useState(false);
   const [customEmail, setCustomEmail] = useState('');
   const [customName, setCustomName] = useState('');
+  const [loginActivationCode, setLoginActivationCode] = useState('');
+  const [loginCodeError, setLoginCodeError] = useState<string | null>(null);
   const [isSubmittingGoogle, setIsSubmittingGoogle] = useState(false);
   const [copiedRip, setCopiedRip] = useState(false);
 
   // نافذة إشعار "حسابك قيد المراجعة" بعد التسجيل
   const [pendingModalUser, setPendingModalUser] = useState<{ email: string; name: string } | null>(null);
+  const [pendingActivationCode, setPendingActivationCode] = useState('');
+  const [pendingCodeFeedback, setPendingCodeFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [isRedeemingPendingCode, setIsRedeemingPendingCode] = useState(false);
 
   // جهاز المشرف الأدمن
   const [isAdminDevice, setIsAdminDevice] = useState<boolean>(() => {
@@ -135,6 +141,18 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
     setTimeout(() => setCopiedRip(false), 2500);
   };
 
+  const handleAdminButtonClick = () => {
+    if (isAdminDevice) {
+      if (onOpenAdminPanel) {
+        onOpenAdminPanel();
+      } else {
+        onGoogleSignIn(ADMIN_USER);
+      }
+    } else {
+      setShowAdminUnlockModal(true);
+    }
+  };
+
   const handleAdminLogin = () => {
     localStorage.setItem('smart_notebook_is_admin_device', 'true');
     setIsAdminDevice(true);
@@ -144,22 +162,27 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
   const handleAdminUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = adminEmailVerify.trim().toLowerCase();
-    if (clean === ADMIN_EMAIL.toLowerCase() || clean === 'admin' || clean === 'djazil') {
+    if (clean === ADMIN_EMAIL.toLowerCase() || clean === 'admin' || clean === 'djazil' || clean === '2026') {
       localStorage.setItem('smart_notebook_is_admin_device', 'true');
       setIsAdminDevice(true);
       setShowAdminUnlockModal(false);
       setAdminVerifyError(null);
-      onGoogleSignIn(ADMIN_USER);
+      if (onOpenAdminPanel) {
+        onOpenAdminPanel();
+      } else {
+        onGoogleSignIn(ADMIN_USER);
+      }
     } else {
       setAdminVerifyError('البريد غير متطابق مع بريد الإدارة (djazild@gmail.com).');
     }
   };
 
-  // التسجيل والمزامنة المباشرة مع Firestore
+  // التسجيل والتحقق الذكي من حالة التفعيل في السحابة أو كود التفعيل الاحتياطي
   const handleGoogleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customEmail.trim()) return;
 
+    setLoginCodeError(null);
     setIsSubmittingGoogle(true);
     const cleanEmail = customEmail.trim().toLowerCase();
     const name = customName.trim() || cleanEmail.split('@')[0];
@@ -179,24 +202,79 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
       return;
     }
 
-    // حفظ طلب التفعيل في Firestore مباشرة لظهوره اللحظي بكنترول الأدمن
-    await saveSubscriptionToFirestore({
-      teacherEmail: cleanEmail,
-      teacherName: name,
-      phoneNumber: '',
-      planId: '1year',
-      status: 'pending',
-      amountDZD: 5000,
-      isLifetime: false,
-      requestedAt: new Date().toISOString(),
-      expiresAt: null
+    // 1. إذا أدخل الأستاذ كود التفعيل الاحتياطي مباشرة في نافذة الدخول
+    if (loginActivationCode.trim()) {
+      const codeResult = await verifyAndRedeemActivationCode(cleanEmail, loginActivationCode, name);
+      if (!codeResult.success) {
+        setLoginCodeError(codeResult.message);
+        setIsSubmittingGoogle(false);
+        return;
+      }
+      setIsSubmittingGoogle(false);
+      setShowGoogleModal(false);
+      setLoginActivationCode('');
+      onGoogleSignIn({
+        email: cleanEmail,
+        name: codeResult.subscription?.teacherName || name,
+        isAdmin: false,
+        isActive: true
+      });
+      return;
+    }
+
+    // 2. فحص حالة الأستاذ الحقيقية في السحابة (Firestore + Cloud Sync Store + Local) دون طمس حالة التفعيل السابقة
+    const sub = await registerOrUpdateGoogleUser({
+      email: cleanEmail,
+      name
     });
 
     setIsSubmittingGoogle(false);
     setShowGoogleModal(false);
 
-    // إظهار نافذة الانتظار والتنبيه
-    setPendingModalUser({ email: cleanEmail, name });
+    // إذا كان الأستاذ مفعلاً مسبقاً، يدخل مباشرة إلى الدفتر اليومي دون نافذة الانتظار
+    if (sub.status === 'active') {
+      onGoogleSignIn({
+        email: cleanEmail,
+        name: sub.teacherName || name,
+        isAdmin: false,
+        isActive: true
+      });
+      return;
+    }
+
+    // إذا كان الحساب جديداً أو قيد المراجعة فعلياً، إظهار نافذة المتابعة
+    setPendingActivationCode('');
+    setPendingCodeFeedback(null);
+    setPendingModalUser({ email: cleanEmail, name: sub.teacherName || name });
+  };
+
+  const handleRedeemCodeInPendingModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingModalUser || !pendingActivationCode.trim()) return;
+    setIsRedeemingPendingCode(true);
+    setPendingCodeFeedback(null);
+    try {
+      const res = await verifyAndRedeemActivationCode(
+        pendingModalUser.email,
+        pendingActivationCode,
+        pendingModalUser.name
+      );
+      if (res.success) {
+        setPendingCodeFeedback({ text: res.message, type: 'success' });
+        const targetUser = pendingModalUser;
+        setPendingModalUser(null);
+        onGoogleSignIn({
+          email: targetUser.email,
+          name: res.subscription?.teacherName || targetUser.name,
+          isAdmin: false,
+          isActive: true
+        });
+      } else {
+        setPendingCodeFeedback({ text: res.message, type: 'error' });
+      }
+    } finally {
+      setIsRedeemingPendingCode(false);
+    }
   };
 
   const handleProceedPendingLogin = () => {
@@ -252,30 +330,30 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
               theme="dark"
             />
 
-            {/* زر الدخول يظهر بجانب الشعار في الهاتف لتوفير المساحة */}
-            <div className="flex sm:hidden items-center shrink-0">
-              {isAdminDevice ? (
-                <button
-                  onClick={handleAdminLogin}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 whitespace-nowrap"
-                >
-                  <ShieldCheck className="w-4 h-4 shrink-0" />
-                  <span>الأدمن</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setShowGoogleModal(true)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-blue-600/30 whitespace-nowrap"
-                >
-                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
-                    <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>دخول الأستاذ</span>
-                </button>
-              )}
+            {/* أزرار الدخول السريع في الهاتف */}
+            <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleAdminButtonClick}
+                className="bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-2.5 py-2 rounded-xl transition flex items-center gap-1 shadow-sm whitespace-nowrap cursor-pointer"
+                title="فتح لوحة تحكم المشرف وإدارة الاشتراكات"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                <span>لوحة المشرف</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGoogleModal(true)}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-blue-600/30 whitespace-nowrap cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                <span>دخول الأستاذ</span>
+              </button>
             </div>
           </div>
 
@@ -306,30 +384,31 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
               </button>
             </div>
 
-            {/* زر الدخول على الشاشات المتوسطة والكبيرة */}
-            <div className="hidden sm:flex items-center shrink-0">
-              {isAdminDevice ? (
-                <button
-                  onClick={handleAdminLogin}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 whitespace-nowrap"
-                >
-                  <ShieldCheck className="w-4 h-4 shrink-0" />
-                  <span>لوحة الأدمن</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setShowGoogleModal(true)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-blue-600/30 whitespace-nowrap"
-                >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                    <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>تسجيل / دخول Google</span>
-                </button>
-              )}
+            {/* أزرار الدخول ولوحة المشرف على الشاشات المتوسطة والكبيرة */}
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleAdminButtonClick}
+                className="bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
+                title="فتح لوحة تحكم المشرف وإدارة اشتراكات الأساتذة"
+              >
+                <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-400" />
+                <span>لوحة المشرف</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowGoogleModal(true)}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-blue-600/30 whitespace-nowrap cursor-pointer"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                <span>تسجيل / دخول Google</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1066,6 +1145,30 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                 />
               </div>
 
+              {/* حقل اختياري لإدخال كود التفعيل الاحتياطي للدخول الفوري */}
+              <div className="p-3 bg-slate-950/90 rounded-xl border border-emerald-500/30 space-y-1.5">
+                <label className="flex items-center justify-between text-[11px] font-bold text-emerald-400">
+                  <span className="flex items-center gap-1">
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>لديك كود تفعيل من الإدارة؟ (اختياري)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-normal">يفتح الدفتر فوراً</span>
+                </label>
+                <input
+                  type="text"
+                  value={loginActivationCode}
+                  onChange={e => {
+                    setLoginActivationCode(e.target.value.toUpperCase());
+                    if (loginCodeError) setLoginCodeError(null);
+                  }}
+                  placeholder="DFTR-XXXX-XXXX"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-emerald-300 text-xs font-mono tracking-wider uppercase dir-ltr text-center focus:outline-none focus:border-emerald-500"
+                />
+                {loginCodeError && (
+                  <p className="text-[11px] text-rose-400 font-bold">{loginCodeError}</p>
+                )}
+              </div>
+
               {/* تذكير رقم RIP داخل نموذج التسجيل */}
               <div className="p-3 bg-slate-950 rounded-xl border border-blue-500/30 text-[11px] space-y-1">
                 <span className="text-slate-400 block font-bold">💳 تحويل الاشتراك عبر بريدي موب RIP:</span>
@@ -1085,7 +1188,7 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
                   disabled={isSubmittingGoogle}
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-600/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <span>{isSubmittingGoogle ? 'جاري التسجيل...' : 'تأكيد التسجيل والدخول'}</span>
+                  <span>{isSubmittingGoogle ? 'جاري التحقق من التفعيل...' : 'تأكيد التسجيل والدخول'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -1103,13 +1206,45 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
               <BrandLogo size="sm" showText={false} />
               <div className="min-w-0">
                 <h3 className="text-base font-black text-white">حسابك قيد المراجعة والتدقيق</h3>
-                <p className="text-[11px] text-slate-400 truncate">{pendingModalUser.email}</p>
+                <p className="text-[11px] text-slate-400 truncate font-mono">{pendingModalUser.email}</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              مرحباً بك يا <strong className="text-white">{pendingModalUser.name}</strong>! تم إرسال معلومات حسابك بنجاح إلى قاعدة البيانات ولوحة تحكم المشرف بانتظار التفعيل.
+              مرحباً بك يا <strong className="text-white">{pendingModalUser.name}</strong>! تم تسجيل طلبك بنجاح. إذا استلمت كود التفعيل من الإدارة يمكنك إدخاله بالأسفل لفتح الدفتر فوراً.
             </p>
+
+            {/* بطاقة التفعيل الفوري بالكود داخل نافذة المراجعة */}
+            <form onSubmit={handleRedeemCodeInPendingModal} className="p-3.5 bg-slate-950 rounded-2xl border border-emerald-500/40 space-y-2">
+              <label className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>تفعيل فوري بكود التفعيل الاحتياطي:</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={pendingActivationCode}
+                  onChange={e => {
+                    setPendingActivationCode(e.target.value.toUpperCase());
+                    if (pendingCodeFeedback) setPendingCodeFeedback(null);
+                  }}
+                  placeholder="DFTR-XXXX-XXXX"
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-emerald-300 text-xs font-mono uppercase tracking-wider dir-ltr text-center focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="submit"
+                  disabled={isRedeemingPendingCode || !pendingActivationCode.trim()}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {isRedeemingPendingCode ? 'جارٍ...' : 'تفعيل الآن'}
+                </button>
+              </div>
+              {pendingCodeFeedback && (
+                <p className={`text-[11px] font-bold ${pendingCodeFeedback.type === 'success' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {pendingCodeFeedback.text}
+                </p>
+              )}
+            </form>
 
             {/* تفاصيل بريدي موب وواتساب للمتابعة */}
             <div className="p-4 bg-slate-950 rounded-2xl border border-blue-500/30 space-y-2 text-xs">
@@ -1136,7 +1271,7 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
               onClick={handleProceedPendingLogin}
               className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
             >
-              متابعة إلى الصفحة الرئيسية
+              متابعة إلى صفحة انتظار التفعيل
             </button>
           </div>
         </div>
@@ -1251,12 +1386,25 @@ export default function LandingPage({ classes, onGoogleSignIn }: LandingPageProp
             subtitle="للتعليم الثانوي الجزائري • إصدار 2026/2027"
             theme="dark"
           />
-          {isAdminDevice && (
-            <span className="font-mono text-emerald-400 text-xs flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>djazild@gmail.com</span>
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAdminButtonClick}
+              className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>لوحة تحكم المشرف</span>
+            </button>
+            {isAdminDevice && (
+              <button
+                type="button"
+                onClick={handleAdminLogin}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+              >
+                <span>دخول دفتر المشرف</span>
+              </button>
+            )}
+          </div>
         </div>
       </footer>
     </div>

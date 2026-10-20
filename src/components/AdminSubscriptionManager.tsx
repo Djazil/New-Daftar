@@ -3,7 +3,8 @@ import {
   ShieldCheck, CheckCircle2, Clock, AlertTriangle,
   UserCheck, Search, Calendar, RefreshCw, X,
   Trash2, ShieldAlert, PauseCircle, PlayCircle,
-  RotateCcw, History, FileSpreadsheet, Ban, UserX
+  RotateCcw, History, FileSpreadsheet, Ban, UserX,
+  KeyRound, Copy, Check, MessageCircle
 } from 'lucide-react';
 import { AuthUser, SubscriptionPlanId, TeacherSubscription, AdminAuditLog } from '../types';
 import {
@@ -11,7 +12,8 @@ import {
   activateTeacherSubscription, fetchSubscriptionsFromServer,
   cancelTeacherSubscription, suspendTeacherAccount,
   resetTeacherNotebookData, permanentlyDeleteTeacherAccount,
-  fetchAdminAuditLogs, getDeletedEmails
+  fetchAdminAuditLogs, getDeletedEmails,
+  generateTeacherActivationCode, createWhatsAppCodeDeliveryLink
 } from '../services/subscriptionService';
 import { subscribeToAllSubscriptionsInFirestore } from '../services/firebaseSubscriptionService';
 import BrandLogo from './BrandLogo';
@@ -55,12 +57,20 @@ export default function AdminSubscriptionManager({
   const [subToDelete, setSubToDelete] = useState<TeacherSubscription | null>(null);
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState('');
 
+  // حالة إضافة وتفعيل بريد أستاذ يدوياً من لوحة المشرف
+  const [showManualAddForm, setShowManualAddForm] = useState(false);
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualName, setManualName] = useState('');
+  const [manualPhone, setManualPhone] = useState('');
+  const [manualPlan, setManualPlan] = useState<SubscriptionPlanId>('lifetime');
+  const [isAddingManual, setIsAddingManual] = useState(false);
+
   // مزامنة الاشتراكات وسجل التدقيق
   useEffect(() => {
     let isMounted = true;
 
-    // جلب أولي من السيرفر
-    fetchSubscriptionsFromServer().then(data => {
+    // جلب أولي شامل من السحابة والسيرفر بهدوء دون إطلاق حلقة أحداث خارجية
+    fetchSubscriptionsFromServer({ silent: true }).then(data => {
       if (isMounted && data) {
         setSubscriptions(data);
       }
@@ -72,55 +82,152 @@ export default function AdminSubscriptionManager({
       }
     });
 
-    // اشتراك مباشر مع Firestore
+    // اشتراك مباشر مع Firestore (مجموعتي subscriptions و users) مع احترام قرارات الإلغاء والإيقاف والحذف
     const unsub = subscribeToAllSubscriptionsInFirestore((firestoreMap) => {
       if (isMounted && firestoreMap) {
         const deleted = getDeletedEmails();
-        const filtered: Record<string, TeacherSubscription> = {};
-        Object.keys(firestoreMap).forEach(key => {
-          const clean = key.toLowerCase();
+        const localCurrent = loadAllSubscriptions();
+        const combined: Record<string, TeacherSubscription> = {};
+
+        // 1. نسخ السجلات المحلية غير المحذوفة
+        Object.keys(localCurrent).forEach(k => {
+          const clean = k.trim().toLowerCase();
           if (!deleted.includes(clean) || clean === ADMIN_EMAIL.toLowerCase()) {
-            filtered[clean] = firestoreMap[key];
+            combined[clean] = localCurrent[k];
           }
         });
-        setSubscriptions(filtered);
+
+        // 2. دمج السجلات السحابية الحية مع احترام الطابع الزمني الأحدث للإجراءات الإدارية
+        Object.keys(firestoreMap).forEach(key => {
+          const clean = key.trim().toLowerCase();
+          if (deleted.includes(clean) && clean !== ADMIN_EMAIL.toLowerCase()) {
+            delete combined[clean];
+            return;
+          }
+          const existing = combined[clean];
+          const incoming = firestoreMap[key];
+          if (!existing) {
+            combined[clean] = incoming;
+            return;
+          }
+
+          // مقارنة الطوابع الزمنية للإجراءات الإدارية
+          const existCancel = existing.status === 'pending' && existing.canceledAt ? new Date(existing.canceledAt).getTime() : 0;
+          const existSusp = existing.status === 'suspended' && existing.suspendedAt ? new Date(existing.suspendedAt).getTime() : 0;
+          const incAct = incoming.status === 'active' && incoming.activatedAt ? new Date(incoming.activatedAt).getTime() : 0;
+
+          if (existCancel > incAct && existing.status === 'pending') {
+            combined[clean] = existing;
+          } else if (existSusp > incAct && existing.status === 'suspended') {
+            combined[clean] = existing;
+          } else if (existing.status === 'active' && incoming.status === 'pending' && !incoming.canceledAt) {
+            combined[clean] = { ...incoming, ...existing, status: 'active', isLifetime: true };
+          } else {
+            combined[clean] = incoming;
+          }
+        });
+
+        setSubscriptions(combined);
       }
     });
+
+    const handleLocalUpdate = (ev: Event) => {
+      const customEv = ev as CustomEvent<Record<string, TeacherSubscription>>;
+      if (isMounted && customEv.detail) {
+        setSubscriptions({ ...customEv.detail });
+      }
+    };
+    window.addEventListener('smart_notebook_subscriptions_updated', handleLocalUpdate);
 
     return () => {
       isMounted = false;
       unsub();
+      window.removeEventListener('smart_notebook_subscriptions_updated', handleLocalUpdate);
     };
   }, []);
 
   const reloadData = async () => {
     setIsSyncing(true);
-    const data = await fetchSubscriptionsFromServer();
-    setSubscriptions(data);
-    const logs = await fetchAdminAuditLogs();
-    setAuditLogs(logs);
-    setIsSyncing(false);
-    if (onSubscriptionUpdated) onSubscriptionUpdated();
+    try {
+      const data = await fetchSubscriptionsFromServer({ silent: true });
+      setSubscriptions({ ...data });
+      const logs = await fetchAdminAuditLogs();
+      setAuditLogs(logs);
+      if (onSubscriptionUpdated) onSubscriptionUpdated();
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
-    setTimeout(() => setFeedbackMsg(null), 4000);
+    setTimeout(() => setFeedbackMsg(null), 6000);
   };
 
   const [activatingEmail, setActivatingEmail] = useState<string | null>(null);
+  const [copiedCodeEmail, setCopiedCodeEmail] = useState<string | null>(null);
+  const [lastActivatedSub, setLastActivatedSub] = useState<TeacherSubscription | null>(null);
+
+  const handleCopyTeacherCode = (email: string) => {
+    const code = generateTeacherActivationCode(email);
+    navigator.clipboard.writeText(code);
+    setCopiedCodeEmail(email.toLowerCase());
+    setTimeout(() => setCopiedCodeEmail(null), 2500);
+  };
+
+  // إضافة وتفعيل حساب أستاذ يدوياً عبر البريد الإلكتروني
+  const handleManualAddAndActivate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = manualEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      showToast('يرجى إدخال بريد إلكتروني صحيح للأستاذ (مثال: teacher@gmail.com)', 'error');
+      return;
+    }
+
+    setIsAddingManual(true);
+    try {
+      const code = generateTeacherActivationCode(cleanEmail);
+      const res = await activateTeacherSubscription(currentUser.email, cleanEmail, manualPlan, {
+        teacherName: manualName.trim() || cleanEmail.split('@')[0],
+        phoneNumber: manualPhone.trim(),
+        adminNotes: `تم الإدخال والتفعيل اليدوي المباشر من لوحة المشرف • كود التفعيل الاحتياطي: ${code}`
+      });
+
+      if (res.success && res.subscription) {
+        setLastActivatedSub(res.subscription);
+        setSubscriptions(prev => ({
+          ...prev,
+          [cleanEmail]: res.subscription!
+        }));
+        showToast(`تمت إضافة وتفعيل حساب (${cleanEmail}) بنجاح! كود التفعيل الاحتياطي: ${code}`, 'success');
+        setManualEmail('');
+        setManualName('');
+        setManualPhone('');
+        setShowManualAddForm(false);
+        await reloadData();
+      } else {
+        showToast(res.message, 'error');
+      }
+    } catch (err: any) {
+      showToast('حدث خطأ أثناء إضافة وتفعيل البريد: ' + (err?.message || ''), 'error');
+    } finally {
+      setIsAddingManual(false);
+    }
+  };
 
   // 1. تفعيل الاشتراك
   const handleActivate = async (teacherEmail: string, planId: SubscriptionPlanId = 'lifetime') => {
     setActivatingEmail(teacherEmail);
     try {
+      const code = generateTeacherActivationCode(teacherEmail);
       const res = await activateTeacherSubscription(currentUser.email, teacherEmail, planId, {
-        adminNotes: `تم تفعيل الحساب (${planId === 'lifetime' ? 'مدى الحياة' : planId}) من طرف المشرف الرئيسي`
+        adminNotes: `تم تفعيل الحساب مدى الحياة • كود التفعيل الاحتياطي: ${code}`
       });
       if (res.success) {
-        showToast(res.message, 'success');
+        showToast(`${res.message} — كود التفعيل الاحتياطي: ${code}`, 'success');
         setSelectedSubForEdit(null);
         if (res.subscription) {
+          setLastActivatedSub(res.subscription);
           setSubscriptions(prev => ({
             ...prev,
             [teacherEmail.toLowerCase()]: res.subscription!
@@ -143,6 +250,12 @@ export default function AdminSubscriptionManager({
     const targetEmail = subToCancel.teacherEmail.trim().toLowerCase();
     const res = await cancelTeacherSubscription(currentUser.email, targetEmail, cancelReason);
     if (res.success) {
+      if (res.subscription) {
+        setSubscriptions(prev => ({
+          ...prev,
+          [targetEmail]: res.subscription!
+        }));
+      }
       showToast(res.message, 'success');
       setSubToCancel(null);
       await reloadData();
@@ -158,6 +271,12 @@ export default function AdminSubscriptionManager({
     const isCurrentlySuspended = subToSuspend.status === 'suspended';
     const res = await suspendTeacherAccount(currentUser.email, targetEmail, !isCurrentlySuspended, suspendReason);
     if (res.success) {
+      if (res.subscription) {
+        setSubscriptions(prev => ({
+          ...prev,
+          [targetEmail]: res.subscription!
+        }));
+      }
       showToast(res.message, 'success');
       setSubToSuspend(null);
       await reloadData();
@@ -227,7 +346,7 @@ export default function AdminSubscriptionManager({
       <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl text-right overflow-hidden">
         
         {/* هيدر لوحة التحكم */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3 shrink-0">
+        <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <BrandLogo size="sm" showText={false} />
             <div className="min-w-0">
@@ -238,12 +357,26 @@ export default function AdminSubscriptionManager({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => setShowManualAddForm(prev => !prev)}
+              className={`px-3 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-md ${
+                showManualAddForm
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+              }`}
+            >
+              <UserCheck className="w-4 h-4" />
+              <span>+ إضافة وتفعيل بريد أستاذ يدوياً</span>
+            </button>
+
+            <button
               onClick={reloadData}
               disabled={isSyncing}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
-              title="تحديث ومزامنة البيانات"
+              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-slate-700"
+              title="مزامنة شاملة لجميع الحسابات من السحابة والخادم"
             >
-              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-400' : 'text-blue-400'}`} />
+              <span className="hidden sm:inline">{isSyncing ? 'جاري المزامنة...' : 'مزامنة السحابة'}</span>
             </button>
 
             <button
@@ -256,15 +389,132 @@ export default function AdminSubscriptionManager({
           </div>
         </div>
 
-        {/* إشعار التنبيه Toast */}
+        {/* نموذج الإدخال والتفعيل اليدوي السريع لبريد الأستاذ */}
+        {showManualAddForm && (
+          <form
+            onSubmit={handleManualAddAndActivate}
+            className="p-4 bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border-b border-emerald-500/30 space-y-3 animate-fadeIn shrink-0"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-black">
+                <KeyRound className="w-4 h-4" />
+                <span>إدخال وتفعيل بريد أستاذ يدوياً (مع توليد كود التفعيل الاحتياطي فوراً)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowManualAddForm(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                إغلاق ×
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+              <div className="sm:col-span-4">
+                <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                  البريد الإلكتروني للأستاذ (Gmail) *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={manualEmail}
+                  onChange={e => setManualEmail(e.target.value)}
+                  placeholder="teacher@gmail.com"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono dir-ltr text-left focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                  اسم الأستاذ(ة) (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={manualName}
+                  onChange={e => setManualName(e.target.value)}
+                  placeholder="مثال: أ. بن عيسى"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                  الهاتف / الثانوية (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={manualPhone}
+                  onChange={e => setManualPhone(e.target.value)}
+                  placeholder="06xxxxxxxx"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="sm:col-span-3 flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isAddingManual || !manualEmail.trim()}
+                  className="w-full py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{isAddingManual ? 'جاري التفعيل...' : 'إضافة وتفعيل فوري'}</span>
+                </button>
+              </div>
+            </div>
+
+            {manualEmail.trim().includes('@') && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-300">
+                <span>
+                  كود التفعيل الاحتياطي الخاص بهذا البريد:{' '}
+                  <strong className="font-mono text-emerald-300 dir-ltr inline-block bg-slate-950 px-2 py-0.5 rounded border border-emerald-500/30">
+                    {generateTeacherActivationCode(manualEmail.trim())}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyTeacherCode(manualEmail.trim())}
+                  className="text-emerald-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>نسخ الكود</span>
+                </button>
+              </div>
+            )}
+          </form>
+        )}
+
+        {/* إشعار التنبيه Toast وشريط إرسال كود التفعيل عبر واتساب بعد التفعيل */}
         {feedbackMsg && (
-          <div className={`p-3 text-xs font-bold flex items-center gap-2 border-b animate-fadeIn ${
+          <div className={`p-3 text-xs font-bold flex flex-wrap items-center justify-between gap-2 border-b animate-fadeIn ${
             feedbackMsg.type === 'success'
               ? 'bg-emerald-950/70 text-emerald-300 border-emerald-800'
               : 'bg-rose-950/70 text-rose-300 border-rose-800'
           }`}>
-            {feedbackMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-rose-400" />}
-            <span>{feedbackMsg.text}</span>
+            <div className="flex items-center gap-2">
+              {feedbackMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />}
+              <span>{feedbackMsg.text}</span>
+            </div>
+            {lastActivatedSub && feedbackMsg.type === 'success' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyTeacherCode(lastActivatedSub.teacherEmail)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>نسخ الكود ({generateTeacherActivationCode(lastActivatedSub.teacherEmail)})</span>
+                </button>
+                <a
+                  href={createWhatsAppCodeDeliveryLink(lastActivatedSub)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1.5 shadow-sm transition shrink-0"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>إرسال إشعار وكود التفعيل للأستاذ عبر واتساب</span>
+                </a>
+              </div>
+            )}
           </div>
         )}
 
@@ -456,7 +706,50 @@ export default function AdminSubscriptionManager({
 
                       <p className="text-xs font-mono text-slate-400">{item.teacherEmail}</p>
 
-                      <div className="flex items-center gap-3 text-[10px] text-slate-400 flex-wrap">
+                      {/* كود التفعيل الاحتياطي الفوري المرتبط ببريد الأستاذ */}
+                      {!isAdmin && (
+                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-emerald-500/30 text-[11px]">
+                            <KeyRound className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span className="text-slate-400">كود التفعيل الاحتياطي:</span>
+                            <span className="font-mono font-black text-emerald-300 tracking-wider dir-ltr tabular-nums">
+                              {generateTeacherActivationCode(item.teacherEmail)}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleCopyTeacherCode(item.teacherEmail)}
+                            className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                            title="نسخ كود التفعيل الاحتياطي لإرساله للأستاذ"
+                          >
+                            {copiedCodeEmail === item.teacherEmail.toLowerCase() ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-300">تم النسخ</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3 text-blue-400" />
+                                <span>نسخ الكود</span>
+                              </>
+                            )}
+                          </button>
+
+                          <a
+                            href={createWhatsAppCodeDeliveryLink(item)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold flex items-center gap-1 transition"
+                            title="إرسال كود التفعيل ورابط المنصة للأستاذ عبر واتساب"
+                          >
+                            <MessageCircle className="w-3 h-3 text-emerald-400" />
+                            <span>إرسال الكود واتساب</span>
+                          </a>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-3 text-[10px] text-slate-400 flex-wrap pt-0.5">
                         {item.requestedAt && (
                           <span className="flex items-center gap-1">
                             <Calendar className="w-3 h-3 text-slate-500" />

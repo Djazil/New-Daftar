@@ -430,9 +430,13 @@ export default function App() {
           isActive: false
         };
 
-        const userProf = await fetchOrCreateUserProfileInFirestore(authUser);
-        const status = userProf ? userProf.status : 'pending';
-        const isActive = status === 'active';
+        const [, userProf] = await Promise.all([
+          registerOrUpdateGoogleUser(authUser).catch(() => null),
+          fetchOrCreateUserProfileInFirestore(authUser).catch(() => null)
+        ]);
+        const access = checkTeacherFeatureAccess(email);
+        const status = access.status === 'active' || userProf?.status === 'active' ? 'active' : (userProf?.status || access.status);
+        const isActive = status === 'active' || isAdmin;
 
         const verifiedUser: AuthUser = {
           ...authUser,
@@ -502,6 +506,15 @@ export default function App() {
   const [isParentPreviewOpen, setIsParentPreviewOpen] = useState(false);
   const [isAdminManagerOpen, setIsAdminManagerOpen] = useState(false);
   const [subscriptionRefreshTick, setSubscriptionRefreshTick] = useState(0);
+
+  // الاستماع لأي تحديث في حالة الاشتراكات (عبر السحابة أو كود التفعيل الاحتياطي) لفتح الدفتر فوراً
+  useEffect(() => {
+    const handleSubUpdate = () => {
+      setSubscriptionRefreshTick(t => t + 1);
+    };
+    window.addEventListener('smart_notebook_subscriptions_updated', handleSubUpdate);
+    return () => window.removeEventListener('smart_notebook_subscriptions_updated', handleSubUpdate);
+  }, []);
 
   // حالة النافذة التفاعلية لاختيار السنة والقسم
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
@@ -778,20 +791,30 @@ export default function App() {
     return currentUser ? currentUser.email.toLowerCase().replace(/[^a-z0-9]/g, '_') : 'guest';
   }, [currentUser?.email]);
 
-  // استرجاع بيانات الأستاذ المعزولة من السيرفر والتخزين الدائم (فقط إذا كان الحساب مفعلاً بمعترك active)
+  const loadedTeacherKeyRef = React.useRef<string | null>(null);
+
+  // استرجاع بيانات الأستاذ المعزولة من السيرفر والتخزين الدائم (فقط عند دخول الأستاذ لأول مرة أو انتقال حالته إلى active)
   useEffect(() => {
     if (!currentUser) {
+      loadedTeacherKeyRef.current = null;
       setIsDataLoading(false);
       return;
     }
     const access = checkTeacherFeatureAccess(currentUser.email);
     if (access.status !== 'active') {
+      loadedTeacherKeyRef.current = null;
       setIsWelcomeWizardOpen(false);
       setIsDataLoading(false);
       return;
     }
 
     const cleanKey = teacherStorageKey;
+    // إذا تم تحميل بيانات هذا الأستاذ بالفعل في الجلسة الحالية، لا نعيد تفعيل شاشة التحميل ولا نهدم النوافذ المفتوحة (مثل لوحة المشرف)
+    if (loadedTeacherKeyRef.current === cleanKey) {
+      setIsDataLoading(false);
+      return;
+    }
+    loadedTeacherKeyRef.current = cleanKey;
     setIsDataLoading(true);
 
     // حاول قراءة التخزين المحلي فوراً أولاً لتفادي أي تذبذب بصري أثناء انتظار السيرفر
@@ -865,7 +888,7 @@ export default function App() {
     }).finally(() => {
       setIsDataLoading(false);
     });
-  }, [teacherStorageKey]);
+  }, [teacherStorageKey, subscriptionRefreshTick]);
 
   // مزامنة التعديلات خادمياً ومحلياً بنظام الحفظ التلقائي متعدد المستويات (فقط للحسابات النشطة active)
   useEffect(() => {
@@ -1995,6 +2018,10 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             setIsParentPreviewOpen(false);
             handleGoogleSignIn(user);
           }}
+          onOpenAdminPanel={() => {
+            localStorage.setItem('smart_notebook_is_admin_device', 'true');
+            setIsAdminManagerOpen(true);
+          }}
         />
         {isAdminManagerOpen && (
           <AdminSubscriptionManager
@@ -2020,13 +2047,20 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
   // 0.5 أثناء تحميل بيانات الأستاذ وجلسة الإعدادات من السيرفر والتخزين الدائم
   if (currentUser && isDataLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center font-sans dir-rtl">
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center font-sans dir-rtl relative">
         <div className="mb-4 animate-pulse">
           <BrandLogo size="xl" showText={false} />
         </div>
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
         <h2 className="text-base font-bold text-white mb-1">جارٍ استعادة بيانات الأستاذ والتأكد من إعدادات الحساب...</h2>
         <p className="text-xs text-slate-400">الدفتر اليومي الذكي للأستاذ — مزامنة سحابية بنسبة 100%</p>
+        {isAdminManagerOpen && (
+          <AdminSubscriptionManager
+            currentUser={currentUser || ADMIN_USER}
+            onClose={() => setIsAdminManagerOpen(false)}
+            onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
+          />
+        )}
       </div>
     );
   }
@@ -2062,6 +2096,10 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           }}
           onLogout={handleLogout}
           onRefreshSubscriptionStatus={() => setSubscriptionRefreshTick(t => t + 1)}
+          onOpenAdminPanel={() => {
+            localStorage.setItem('smart_notebook_is_admin_device', 'true');
+            setIsAdminManagerOpen(true);
+          }}
         />
         {isAdminManagerOpen && (
           <AdminSubscriptionManager
@@ -2260,7 +2298,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 <span className="text-[10px] text-blue-400 font-mono">{currentUser?.email}</span>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
-                {currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
+                {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
                   <button
                     onClick={() => {
                       setIsAdminManagerOpen(true);
@@ -2269,7 +2307,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     className="col-span-2 py-2 px-3 rounded-xl bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>إدارة الاشتراكات</span>
+                    <span>لوحة المشرف وإدارة الاشتراكات</span>
                   </button>
                 )}
                 <button
@@ -2376,7 +2414,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           <div className="text-[11px] text-slate-400 truncate">{teacherProfile.highSchool}</div>
 
           <div className="pt-2 flex flex-col gap-1.5">
-            {currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
+            {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
               <button
                 onClick={() => setIsAdminManagerOpen(true)}
                 className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-900/90 to-teal-900/90 hover:from-emerald-800 hover:to-teal-800 border border-emerald-500/40 text-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md"
@@ -2689,14 +2727,14 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 </div>
               </div>
 
-              {currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
+              {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
                 <button
                   onClick={() => setIsAdminManagerOpen(true)}
-                  title="لوحة تحكم اشتراكات الأساتذة"
-                  className="px-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 text-xs font-bold shadow-sm cursor-pointer"
+                  title="لوحة تحكم المشرف وإدارة اشتراكات الأساتذة"
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 text-xs font-bold shadow-sm cursor-pointer"
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">إدارة الاشتراكات</span>
+                  <span className="hidden lg:inline">لوحة المشرف</span>
                 </button>
               )}
 
@@ -2934,11 +2972,21 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
 
                     <button
                       onClick={() => setActiveTab('curriculum')}
-                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition border border-slate-700 flex items-center gap-1.5"
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition border border-slate-700 flex items-center gap-1.5 cursor-pointer"
                     >
                       <BookOpen className="w-4 h-4 text-purple-400" />
                       <span>التدرج السنوي والمذكرات</span>
                     </button>
+
+                    {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+                      <button
+                        onClick={() => setIsAdminManagerOpen(true)}
+                        className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white font-black text-xs transition border border-emerald-400/40 flex items-center gap-1.5 shadow-lg shadow-emerald-700/25 cursor-pointer"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-emerald-200" />
+                        <span>لوحة تحكم المشرف وإدارة الاشتراكات</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
