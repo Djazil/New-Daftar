@@ -90,6 +90,11 @@ export interface ClassGroup {
   hasTP: boolean;
   totalDesks?: number; // إمكانية تخصيص وزيادة عدد الطاولات في مخطط الجلوس
   students: Student[];
+  // بيانات أرشفة الأقسام المنتهية
+  isArchived?: boolean;
+  archivedAt?: string;
+  academicYear?: string;
+  archiveNote?: string;
 }
 
 export interface TimetableSession {

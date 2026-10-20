@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan to fix student list OCR image upload by updating invalid model gemini-3.8-flash to gemini-2.5-flash in server.ts",
-  "updatedAt": "2026-10-19T19:28:38.413971377Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "خطة تنفيذية لإضافة ميزة أرشفة الأقسام القديمة داخل قسم إدارة القوائم، تشمل تحديد الموسم الدراسي وملاحظة الأرشفة، عزل الأقسام المؤرشفة عن لوحة القيادة وجدول التوقيت النشط مع الاحتفاظ بحصصها وبياناتها، وتوفير واجهة أرشيف مستقلة للقراءة والطباعة والاستعادة الفورية.",
+  "updatedAt":  "2026-10-20T16:26:07.913842186Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

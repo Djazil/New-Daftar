@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Check, GraduationCap, Users, Plus, ChevronLeft, School, Sparkles } from 'lucide-react';
+import { X, Check, GraduationCap, Users, Plus, ChevronLeft, School, Sparkles, Archive } from 'lucide-react';
 import { ClassGroup, Level } from '../types';
 
 interface ClassSelectorModalProps {
@@ -10,6 +10,8 @@ interface ClassSelectorModalProps {
   onSelectClass: (classId: string) => void;
   onAddNewClass?: () => void;
   maxClasses?: number;
+  archivedCount?: number;
+  onOpenArchive?: () => void;
 }
 
 const HIGH_SCHOOL_LEVELS: { id: Level; label: string; subLabel: string; badge: string; color: string }[] = [
@@ -43,7 +45,9 @@ export default function ClassSelectorModal({
   activeClassId,
   onSelectClass,
   onAddNewClass,
-  maxClasses = 10
+  maxClasses = 10,
+  archivedCount = 0,
+  onOpenArchive
 }: ClassSelectorModalProps) {
   const currentClass = classes.find(c => c.id === activeClassId) || classes[0];
   const [selectedLevel, setSelectedLevel] = useState<Level>(currentClass?.level || '3 ثانوي (بكالوريا)');
@@ -242,10 +246,25 @@ export default function ClassSelectorModal({
         </div>
 
         {/* فوتر النافذة */}
-        <div className="p-3.5 sm:p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-between gap-3 shrink-0">
-          <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
-            القسم النشط حالياً: <strong className="text-slate-900 dark:text-white">{currentClass?.name || 'غير محدد'}</strong>
-          </span>
+        <div className="p-3.5 sm:p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+              القسم النشط حالياً: <strong className="text-slate-900 dark:text-white">{currentClass?.name || 'غير محدد'}</strong>
+            </span>
+            {onOpenArchive && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenArchive();
+                }}
+                className="px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <span>خزانة الأرشيف ({archivedCount})</span>
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}

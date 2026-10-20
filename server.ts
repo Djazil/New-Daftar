@@ -586,7 +586,7 @@ async function startServer() {
   });
 
   // ==========================================
-  // API Route: AI OCR Student List Extraction
+  // API Route: AI OCR Student List Extraction (Unified with Multi-Model Fallback & Smart Retry)
   // ==========================================
   app.post('/api/ocr/extract-students', async (req, res) => {
     try {
@@ -600,7 +600,7 @@ async function startServer() {
       if (!apiKey) {
         return res.status(500).json({
           success: false,
-          message: 'مفتاح Gemini API غير مهيأ على السيرفر. يرجى استخدام طريقة الإدخال اليدوي أو اللصق.'
+          message: 'مفتاح الذكاء الاصطناعي غير مهيأ على الخادم. يرجى استخدام طريقة الإدخال اليدوي أو اللصق.'
         });
       }
 
@@ -613,72 +613,145 @@ async function startServer() {
         }
       });
 
-      const promptText = `
-أنت مساعد ذكي مخصص لاستخراج قوائم أسماء التلاميذ باللغتين العربية والفرنسية من مستندات وقوائم الأقسام المدرسية.
-اقرأ القائمة الموجودة في المستند/الصورة المرفقة واستخرج أسماء التلاميذ مرتبة.
-تجاهل العناوين مثل "قائمة التلاميذ"، "اللقب"، "الاسم"، "الرقم"، "الملاحظات"، "القسم"، "المؤسسة".
-قم بإنتاج مصفوفة JSON تحتوي على كائنات بها المفتاحين "firstName" و "lastName".
-مثال النتيجة المطلوبة:
-[
-  { "firstName": "أحمد", "lastName": "بن علي" },
-  { "firstName": "مريم", "lastName": "بن حمودة" }
-]
-يجب أن ترجع فقط مصفوفة JSON الصحيحة والخالصة دون أي نصوص إضافية أو علامات ماركداون.
-`;
+      const ocrPrompt = `أنت خبير قراءة واستخراج الوثائق المدرسية الرسمية لوزارة التربية الوطنية الجزائرية (قوائم تلاميذ الأقسام، كشوف النقاط، محاضر التنقيط).
+المطلوب منك: قراءة القائمة المرفقة واستخراج جميع أسماء وألقاب التلاميذ كما هي مكتوبة تماماً وبكل أمانة ودقة بالترتيب.
+قواعد صارمة:
+1. تجاهل العناوين الإدارية مثل "قائمة التلاميذ"، "اللقب"، "الاسم"، "الرقم"، "الملاحظات"، "القسم"، "المؤسسة"، "تاريخ الميلاد".
+2. ممنوع منعاً باتاً توليد أو تأليف أي اسم وهمي من عندك.
+3. افصل اللقب (lastName) عن الاسم (firstName). في القوائم الجزائرية يكون اللقب أولاً ثم الاسم. إذا كان الاسم مركباً مثل "محمد الأمين" أو "فاطمة الزهراء"، ضع اللقب في lastName والاسم المركب كاملاً في firstName.
+4. إذا كانت الوثيقة فارغة أو غير مقروءة تماماً، أرجع مصفوفة فارغة [].`;
 
       let contentsPayload: any;
       if (imageBase64) {
-        const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
-        contentsPayload = {
-          parts: [
-            {
-              inlineData: {
-                data: cleanBase64,
-                mimeType: mimeType || 'image/png'
-              }
-            },
-            { text: promptText }
-          ]
-        };
+        const cleanBase64 = String(imageBase64).replace(/^data:[^;]+;base64,/, '').trim();
+        const resolvedMime = mimeType && String(mimeType).includes('/') ? mimeType : 'image/jpeg';
+        contentsPayload = [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: resolvedMime
+            }
+          },
+          { text: ocrPrompt }
+        ];
       } else {
-        contentsPayload = {
-          parts: [
-            { text: `${promptText}\nالنص المدخل:\n${textInput}` }
-          ]
-        };
+        contentsPayload = [
+          { text: `${ocrPrompt}\n\nالنص المدخل:\n${textInput}` }
+        ];
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: contentsPayload,
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
+      // Multi-model fallback chain + smart retry with backoff for 503 UNAVAILABLE / 429 spikes
+      const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+      let response: any = null;
+      let lastError: any = null;
 
-      const outputText = response.text || '';
+      outerLoop: for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+        const modelName = candidateModels[mIdx];
+        const maxAttemptsPerModel = 2;
+
+        for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
+          try {
+            response = await ai.models.generateContent({
+              model: modelName,
+              contents: contentsPayload,
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      lastName: {
+                        type: Type.STRING,
+                        description: 'لقب التلميذ كما هو مكتوب في القائمة'
+                      },
+                      firstName: {
+                        type: Type.STRING,
+                        description: 'اسم التلميذ كما هو مكتوب في القائمة'
+                      }
+                    },
+                    required: ['lastName', 'firstName']
+                  }
+                }
+              }
+            });
+
+            if (response && response.text) {
+              if (mIdx > 0 || attempt > 1) {
+                console.log(`[OCR] Succeeded using model ${modelName} on attempt ${attempt}`);
+              }
+              break outerLoop;
+            }
+          } catch (modelErr: any) {
+            lastError = modelErr;
+            const errStr = String(modelErr?.message || modelErr?.status || '');
+            const isTransient =
+              errStr.includes('503') ||
+              errStr.includes('UNAVAILABLE') ||
+              errStr.includes('high demand') ||
+              errStr.includes('429') ||
+              errStr.includes('RESOURCE_EXHAUSTED') ||
+              errStr.includes('overloaded');
+
+            console.warn(
+              `[OCR] Model ${modelName} (attempt ${attempt}/${maxAttemptsPerModel}) failed: ${modelErr?.status || modelErr?.code || 'ERR'}`
+            );
+
+            // Wait briefly before retrying or switching to the next fallback model
+            if (isTransient) {
+              const delayMs = 650 * attempt + mIdx * 350;
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+            } else {
+              // If error is non-transient (e.g., 404 model not found), immediately try next model
+              break;
+            }
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error('503_UNAVAILABLE');
+      }
+
+      const outputText = response.text || '[]';
       let parsedStudents: Array<{ firstName: string; lastName: string }> = [];
 
       try {
         const cleanJson = outputText.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
         const jsonResult = JSON.parse(cleanJson);
         if (Array.isArray(jsonResult)) {
-          parsedStudents = jsonResult.map((st: any) => ({
-            firstName: String(st.firstName || st.first_name || st.name || 'تلميذ').trim(),
-            lastName: String(st.lastName || st.last_name || st.family_name || '').trim()
-          })).filter(st => st.firstName || st.lastName);
+          parsedStudents = jsonResult
+            .filter((st: any) => st && (st.firstName || st.lastName || st.first_name || st.last_name || st.name))
+            .map((st: any) => ({
+              lastName: String(st.lastName || st.last_name || st.family_name || '').trim() || 'غير محدد',
+              firstName: String(st.firstName || st.first_name || st.name || 'تلميذ').trim() || 'تلميذ'
+            }));
         }
-      } catch (e) {
-        console.error('Failed to parse Gemini JSON output:', outputText);
+      } catch {
+        const jsonMatch = outputText.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          try {
+            const fallbackArr = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(fallbackArr)) {
+              parsedStudents = fallbackArr
+                .filter((st: any) => st && (st.firstName || st.lastName))
+                .map((st: any) => ({
+                  lastName: String(st.lastName || '').trim() || 'غير محدد',
+                  firstName: String(st.firstName || '').trim() || 'تلميذ'
+                }));
+            }
+          } catch {}
+        }
       }
 
       if (parsedStudents.length === 0) {
         return res.status(422).json({
           success: false,
-          message: 'لم يتمكن النظام من التمييز الدقيق لأسماء التلاميذ في هذه الصورة. يرجى التأكد من وضوح الصورة أو استخدام الإدخال اليدوي.'
+          message: 'لم يتمكن النظام من التمييز الدقيق لأسماء التلاميذ في هذه الصورة. يرجى التأكد من وضوح الصورة وإضاءتها أو استخدام اللصق اليدوي.'
         });
       }
 
+      console.log(`[OCR] Extracted ${parsedStudents.length} students successfully.`);
       return res.json({
         success: true,
         students: parsedStudents,
@@ -687,9 +760,20 @@ async function startServer() {
 
     } catch (err: any) {
       console.error('Error in OCR extraction API:', err);
-      return res.status(500).json({
+      const rawMsg = String(err?.message || '');
+      const isOverloaded =
+        rawMsg.includes('503') ||
+        rawMsg.includes('UNAVAILABLE') ||
+        rawMsg.includes('high demand') ||
+        rawMsg.includes('429') ||
+        rawMsg.includes('RESOURCE_EXHAUSTED');
+
+      return res.status(isOverloaded ? 503 : 500).json({
         success: false,
-        message: 'حدث خطأ أثناء معالجة المستند بالذكاء الاصطناعي: ' + (err?.message || 'خطأ غير معروف')
+        isRetryable: true,
+        message: isOverloaded
+          ? 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً رغم تجربة النماذج البديلة. يرجى الضغط على "إعادة المحاولة الآن" بعد ثوانٍ قليلة.'
+          : 'تعذر قراءة المستند في هذه المحاولة. يرجى التأكد من وضوح الصورة والضغط على "إعادة المحاولة الآن" أو استخدام اللصق اليدوي.'
       });
     }
   });
@@ -1077,141 +1161,6 @@ async function startServer() {
     res.json({ success: true, message: 'تم إلغاء الاشتراك بنجاح' });
   });
 
-  // API Route: OCR Extract students from list image (supports up to 100+ students)
-  app.post('/api/ocr/extract-students', async (req, res) => {
-    try {
-      const { imageBase64, mimeType } = req.body;
-      if (!imageBase64) {
-        return res.status(400).json({ success: false, message: 'صورة ورقة القائمة مطلوبة' });
-      }
-
-      // Initialize Gemini SDK with User-Agent telemetry and injected API Key
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build'
-          }
-        }
-      });
-
-      // Robustly strip any data url prefix (e.g. data:image/jpeg;base64, data:image/png;base64,)
-      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
-      const resolvedMime = mimeType && mimeType.includes('/') ? mimeType : 'image/jpeg';
-
-      const ocrPrompt = `أنت خبير قراءة واستخراج الوثائق المدرسية الرسمية لوزارة التربية الوطنية الجزائرية (قوائم تلاميذ الأقسام، كشوف النقاط، محاضر التنقيط).
-المطلوب منك: قراءة الصورة المرفوعة واستخراج جميع أسماء وتلاميذ القائمة كما هي مكتوبة في الورقة تماماً وبكل أمانة ودقة.
-
-قواعد صارمة جداً لا تحتمل أي خطأ:
-1. استخرج حصراً الأسماء والألقاب الموجودة فعلياً في وثيقة القائمة المرفوعة.
-2. ممنوع منعاً باتاً توليد أو تأليف أو تخمين أي اسم وهمي من عندك.
-3. إذا كانت القائمة تحتوي على 5 أو 30 أو 60 أو 100 تلميذ، استخرج كل تلميذ بالترتيب الرقمي للقائمة.
-4. افصل اللقب (Nom/lastName) عن الاسم (Prénom/firstName). في الوثائق الجزائرية يكون اللقب أولاً ثم الاسم. إذا كان الاسم مركباً مثل "محمد الأمين" أو "فاطمة الزهراء"، اجعل اللقب في lastName والاسم كاملاً في firstName.
-5. إذا كانت الصورة رديئة تماماً أو بيضاء أو لا تحتوي على قائمة تلاميذ، أعد مصفوفة فارغة [] ولا تخترع شيئاً.`;
-
-      // Fallback model chain to gracefully handle 503 UNAVAILABLE / high demand spikes
-      const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
-      let response: any = null;
-      let lastError: any = null;
-
-      for (let i = 0; i < candidateModels.length; i++) {
-        const modelName = candidateModels[i];
-        try {
-          response = await ai.models.generateContent({
-            model: modelName,
-            contents: [
-              {
-                inlineData: {
-                  data: cleanBase64,
-                  mimeType: resolvedMime
-                }
-              },
-              {
-                text: ocrPrompt
-              }
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    lastName: {
-                      type: Type.STRING,
-                      description: 'لقب التلميذ كما هو مكتوب في الوثيقة'
-                    },
-                    firstName: {
-                      type: Type.STRING,
-                      description: 'اسم التلميذ كما هو مكتوب في الوثيقة'
-                    }
-                  },
-                  required: ['lastName', 'firstName']
-                }
-              }
-            }
-          });
-          if (response) break;
-        } catch (modelErr: any) {
-          lastError = modelErr;
-          console.warn(`[OCR] Model ${modelName} attempt failed (${modelErr?.status || modelErr?.code || 'ERR'}), trying next fallback...`);
-          if (i < candidateModels.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 900 * (i + 1)));
-          }
-        }
-      }
-
-      if (!response) {
-        throw lastError || new Error('خدمة القراءة الضوئية تواجه ضغطاً مؤقتاً، يرجى المحاولة بعد لحظات.');
-      }
-
-      const text = response.text || '[]';
-      let parsedStudents: any[] = [];
-      try {
-        parsedStudents = JSON.parse(text);
-      } catch {
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          parsedStudents = JSON.parse(jsonMatch[0]);
-        }
-      }
-
-      if (!Array.isArray(parsedStudents) || parsedStudents.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'لم يتم العثور على أي أسماء تلاميذ واضحة في الصورة المرفوعة. يرجى التأكد من وضوح تصوير ورقة القائمة وإعادة المحاولة.'
-        });
-      }
-
-      // Filter and sanitize actual extracted students
-      const validStudents = parsedStudents
-        .filter(s => s && (s.lastName || s.firstName))
-        .map(s => ({
-          lastName: (s.lastName || '').trim() || 'غير محدد',
-          firstName: (s.firstName || '').trim() || 'تلميذ'
-        }));
-
-      if (validStudents.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'لم يتعرف النظام على أسماء مقروءة في الصورة. يرجى التقاط صورة واضحة للائحة الأسماء.'
-        });
-      }
-
-      console.log(`[OCR] Extracted ${validStudents.length} real students from image.`);
-      res.json({ success: true, students: validStudents });
-    } catch (err: any) {
-      console.error('OCR Extraction Error:', err);
-      const rawMsg = String(err?.message || '');
-      const isOverloaded = rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE') || rawMsg.includes('high demand') || rawMsg.includes('429');
-      res.status(503).json({
-        success: false,
-        message: isOverloaded
-          ? 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً. يرجى الضغط على "إعادة المحاولة" بعد ثوانٍ قليلة.'
-          : 'تعذر استخراج الأسماء من الصورة. يرجى التأكد من وضوح وإضاءة ورقة القائمة والمحاولة مجدداً.'
-      });
-    }
-  });
 
   // API Route: Seed default sample subscriptions
   app.post('/api/subscriptions/seed', (req, res) => {

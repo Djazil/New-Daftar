@@ -11,7 +11,7 @@ import {
   Maximize2, HelpCircle, Layers, ArrowRightLeft, BookMarked,
   Trophy, Scale, TrendingDown, Minus, Filter, LogOut, Box,
   HeartHandshake, Phone, MessageSquare, Share2, Copy, ExternalLink,
-  Sun, Moon
+  Sun, Moon, Archive, ArchiveRestore, Lock
 } from 'lucide-react';
 
 import { Classroom3DLab } from './components/Classroom3DLab';
@@ -356,16 +356,66 @@ export const generateSmartRemark = (s: Student, hasTP: boolean): string => {
 // 2. المكون الأساسي
 // ==========================================
 
+// مفاتيح حفظ جلسة الحساب طوال فترة فتح المتصفح الحالية فقط (Session Persistence)
+const BROWSER_SESSION_AUTH_KEY = 'teacher_auth_session_v1';
+const LEGACY_LOCAL_AUTH_KEY = 'teacher_auth_user_v1';
+
+function getSavedSessionUser(): AuthUser | null {
+  try {
+    const rawSession = sessionStorage.getItem(BROWSER_SESSION_AUTH_KEY);
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession);
+      if (parsed && typeof parsed.email === 'string' && parsed.email.trim()) {
+        return parsed as AuthUser;
+      }
+    }
+    // ترقية سلسة إذا كان المستخدم مسجلاً للتو في نفس الجلسة قبل التحديث
+    const rawLocal = localStorage.getItem(LEGACY_LOCAL_AUTH_KEY);
+    if (rawLocal) {
+      const parsed = JSON.parse(rawLocal);
+      if (parsed && typeof parsed.email === 'string' && parsed.email.trim()) {
+        sessionStorage.setItem(BROWSER_SESSION_AUTH_KEY, JSON.stringify(parsed));
+        localStorage.removeItem(LEGACY_LOCAL_AUTH_KEY);
+        return parsed as AuthUser;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function saveBrowserSessionUser(user: AuthUser | null): void {
+  try {
+    if (user && user.email) {
+      sessionStorage.setItem(BROWSER_SESSION_AUTH_KEY, JSON.stringify(user));
+      localStorage.removeItem(LEGACY_LOCAL_AUTH_KEY);
+    } else {
+      sessionStorage.removeItem(BROWSER_SESSION_AUTH_KEY);
+      localStorage.removeItem(LEGACY_LOCAL_AUTH_KEY);
+    }
+  } catch {}
+}
+
+function formatFriendlyOcrError(rawMsg?: string): string {
+  if (!rawMsg) {
+    return 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً، يرجى الضغط على "إعادة المحاولة الآن" بعد لحظات.';
+  }
+  if (rawMsg.includes('{') || rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE') || rawMsg.includes('high demand') || rawMsg.includes('429')) {
+    return 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً. يرجى الضغط على "إعادة المحاولة الآن" بعد ثوانٍ قليلة.';
+  }
+  return rawMsg;
+}
+
 export default function App() {
-  // حالة تسجيل الدخول عبر Firebase Auth و onAuthStateChanged
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  // حالة تسجيل الدخول المستمرة طوال جلسة المتصفح الحالية دون الخروج عند إعادة التحميل
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getSavedSessionUser());
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(() => !getSavedSessionUser());
 
   useEffect(() => {
+    let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseAuthUser) => {
-      setIsAuthLoading(true);
-      if (firebaseAuthUser) {
-        const email = firebaseAuthUser.email || '';
+      // في حال وجود مستخدم حقيقي غير مجهول الهوية عبر Firebase Auth
+      if (firebaseAuthUser && !firebaseAuthUser.isAnonymous && firebaseAuthUser.email) {
+        const email = firebaseAuthUser.email;
         const name = firebaseAuthUser.displayName || email.split('@')[0] || 'أستاذ';
         const avatar = firebaseAuthUser.photoURL || undefined;
         const uid = firebaseAuthUser.uid;
@@ -391,14 +441,61 @@ export default function App() {
           isAdmin: userProf?.role === 'admin' || isAdmin
         };
 
-        setCurrentUser(verifiedUser);
-      } else {
-        setCurrentUser(null);
+        if (isMounted) {
+          saveBrowserSessionUser(verifiedUser);
+          setCurrentUser(verifiedUser);
+          setIsAuthLoading(false);
+        }
+        return;
       }
-      setIsAuthLoading(false);
+
+      // في حال كانت مصادقة Firebase مجهولة الهوية (Anonymous) أو فارغة عند إعادة تحميل الصفحة:
+      // نتحقق من الجلسة النشطة المحفوظة في sessionStorage طوال فترة فتح المتصفح الحالية
+      const savedSessionUser = getSavedSessionUser();
+      if (savedSessionUser && savedSessionUser.email) {
+        const isAdmin = savedSessionUser.isAdmin || savedSessionUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        const uid = savedSessionUser.uid || emailToDocKey(savedSessionUser.email);
+
+        try {
+          await registerOrUpdateGoogleUser(savedSessionUser);
+          const userProf = await fetchOrCreateUserProfileInFirestore({
+            ...savedSessionUser,
+            uid
+          });
+          const access = checkTeacherFeatureAccess(savedSessionUser.email);
+          const isActive = access.status === 'active' || userProf?.status === 'active' || isAdmin;
+
+          const restoredUser: AuthUser = {
+            ...savedSessionUser,
+            uid,
+            isActive,
+            isAdmin: userProf?.role === 'admin' || isAdmin
+          };
+
+          if (isMounted) {
+            saveBrowserSessionUser(restoredUser);
+            setCurrentUser(restoredUser);
+            setIsAuthLoading(false);
+          }
+        } catch {
+          // في حال انقطاع مؤقت، حافظ على الجلسة المحفوظة ولا تخرج من الحساب
+          if (isMounted) {
+            setCurrentUser(savedSessionUser);
+            setIsAuthLoading(false);
+          }
+        }
+      } else {
+        if (isMounted) {
+          setCurrentUser(null);
+          setIsAuthLoading(false);
+        }
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const [isWelcomeWizardOpen, setIsWelcomeWizardOpen] = useState(false);
@@ -424,19 +521,16 @@ export default function App() {
 
   // حالة الملف التعريفي للأستاذ
   const [teacherProfile, setTeacherProfile] = useState<TeacherProfile>(() => {
-    // محاولة قراءة التخزين المعزول أولاً
-    const initialUserJson = localStorage.getItem('teacher_auth_user_v1');
-    if (initialUserJson) {
+    // محاولة قراءة التخزين المعزول أولاً من الجلسة الحالية
+    const u = getSavedSessionUser();
+    if (u && u.email) {
       try {
-        const u = JSON.parse(initialUserJson);
-        if (u && u.email) {
-          const key = u.email.toLowerCase().replace(/[^a-z0-9]/g, '_');
-          const namespacedSaved = localStorage.getItem(`teacher_profile_${key}`);
-          if (namespacedSaved) {
-            const parsed = JSON.parse(namespacedSaved);
-            if (parsed && typeof parsed.isFirstTimeSetupDone === 'boolean') {
-              return parsed;
-            }
+        const key = u.email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const namespacedSaved = localStorage.getItem(`teacher_profile_${key}`);
+        if (namespacedSaved) {
+          const parsed = JSON.parse(namespacedSaved);
+          if (parsed && typeof parsed.isFirstTimeSetupDone === 'boolean') {
+            return parsed;
           }
         }
       } catch {}
@@ -610,6 +704,18 @@ export default function App() {
   const [classListGroupFilter, setClassListGroupFilter] = useState<'all' | 1 | 2>('all');
   const [classListCoordinationFilter, setClassListCoordinationFilter] = useState<'all' | 'urgent' | 'followup' | 'good'>('all');
   const [classListSubTab, setClassListSubTab] = useState<'list' | 'coordination'>('list');
+  // نظام أرشفة الأقسام المنتهية في قسم إدارة القوائم
+  const [classesManagementMode, setClassesManagementMode] = useState<'active' | 'archive'>('active');
+  const [archiveModalClass, setArchiveModalClass] = useState<ClassGroup | null>(null);
+  const [archiveForm, setArchiveForm] = useState<{ academicYear: string; archiveNote: string }>({
+    academicYear: '2026/2027',
+    archiveNote: ''
+  });
+  const [archiveYearFilter, setArchiveYearFilter] = useState<string>('all');
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState<string>('');
+  const [selectedArchivedClassId, setSelectedArchivedClassId] = useState<string | null>(null);
+  const [archivedStudentSearch, setArchivedStudentSearch] = useState<string>('');
+  const [archivedStudentGroupFilter, setArchivedStudentGroupFilter] = useState<'all' | 1 | 2>('all');
   const [isBatchDeleteMode, setIsBatchDeleteMode] = useState(false);
   const [selectedStudentIdsForDelete, setSelectedStudentIdsForDelete] = useState<string[]>([]);
   const [studentToDeleteModal, setStudentToDeleteModal] = useState<{ student: Student; classInfo: ClassGroup } | null>(null);
@@ -879,16 +985,16 @@ export default function App() {
     setTimeout(() => setNotificationMsg(null), 3500);
   };
 
-  // معالجات تسجيل الدخول والإعداد الأولي مع الاعتماد الكامل على المعرف الفريد الثابت (Firebase Auth UID)
+  // معالجات تسجيل الدخول والإعداد الأولي مع حفظ الجلسة طوال فترة فتح المتصفح الحالية فقط
   const handleGoogleSignIn = async (user: AuthUser) => {
-    const firebaseUid = user.uid || auth.currentUser?.uid || emailToDocKey(user.email);
+    const firebaseUid = user.uid || (!auth.currentUser?.isAnonymous && auth.currentUser?.uid) || emailToDocKey(user.email);
     const userWithUid: AuthUser = {
       ...user,
       uid: firebaseUid
     };
 
+    saveBrowserSessionUser(userWithUid);
     setCurrentUser(userWithUid);
-    localStorage.setItem('teacher_auth_user_v1', JSON.stringify(userWithUid));
     const isAdmin = userWithUid.isAdmin || userWithUid.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
     
     // تسجيل وتحديث الحساب تلقائياً في السيرفر ولوحة التحكم وفي Firestore users/{uid} بالحالة الافتراضية pending للأستاذ الجديد
@@ -923,6 +1029,14 @@ export default function App() {
     }
 
     const access = checkTeacherFeatureAccess(userWithUid.email);
+    const updatedUserWithStatus: AuthUser = {
+      ...userWithUid,
+      isActive: access.hasAccess || isAdmin,
+      isAdmin
+    };
+    saveBrowserSessionUser(updatedUserWithStatus);
+    setCurrentUser(updatedUserWithStatus);
+
     if (access.hasAccess) {
       setIsWelcomeWizardOpen(!userSetupDone);
       showNotice(`مرحباً بك يا ${userWithUid.name}! اشتراكك مفعل وساري المفعول.`);
@@ -936,8 +1050,8 @@ export default function App() {
   // تبديل الحساب السريع لاختبار سيناريوهات الأمان والاشتراكات
   const handleSwitchUser = (user: AuthUser | null) => {
     setCurrentUser(user);
+    saveBrowserSessionUser(user);
     if (user) {
-      localStorage.setItem('teacher_auth_user_v1', JSON.stringify(user));
       const isAdmin = user.isAdmin || user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
       if (isAdmin) {
         localStorage.setItem('smart_notebook_is_admin_device', 'true');
@@ -947,7 +1061,6 @@ export default function App() {
         setIsWelcomeWizardOpen(false);
       }
     } else {
-      localStorage.removeItem('teacher_auth_user_v1');
       setIsWelcomeWizardOpen(false);
       setIsParentPreviewOpen(false);
     }
@@ -955,11 +1068,13 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch {}
+    saveBrowserSessionUser(null);
     setCurrentUser(null);
-    localStorage.removeItem('teacher_auth_user_v1');
+    try {
+      if (auth.currentUser && !auth.currentUser.isAnonymous) {
+        await signOut(auth);
+      }
+    } catch {}
     setIsWelcomeWizardOpen(false);
     setIsParentPreviewOpen(false);
     showNotice('تم تسجيل الخروج بنجاح. عودة إلى بوابة الدخول.');
@@ -979,11 +1094,134 @@ export default function App() {
     showNotice(`تم حفظ إعدادات مادتك (${updatedProfile.subject}) مع ${updatedClasses.length} أقسام بنجاح! مرحباً بك.`);
   };
 
-  // القسم النشط
-  const activeClass = useMemo(
-    () => classes.find(c => c.id === activeClassId) || classes[0] || INITIAL_CLASSES[0],
-    [classes, activeClassId]
+  // فصل الأقسام النشطة عن الأقسام المؤرشفة
+  const activeClasses = useMemo(
+    () => classes.filter(c => !c.isArchived),
+    [classes]
   );
+
+  const archivedClasses = useMemo(
+    () => classes.filter(c => Boolean(c.isArchived)),
+    [classes]
+  );
+
+  // إخفاء حصص الأقسام المؤرشفة تلقائياً من جدول التوقيت الأسبوعي مع الاحتفاظ بها لاستعادتها عند إلغاء الأرشفة
+  const activeTimetableSessions = useMemo(() => {
+    const archivedIds = new Set(archivedClasses.map(c => c.id));
+    const archivedNames = new Set(archivedClasses.map(c => c.name));
+    return timetableSessions.filter(
+      s => !archivedIds.has(s.classId) && !archivedNames.has(s.className)
+    );
+  }, [timetableSessions, archivedClasses]);
+
+  // القسم النشط (يُختار من الأقسام النشطة غير المؤرشفة أولاً)
+  const activeClass = useMemo(
+    () => activeClasses.find(c => c.id === activeClassId) || activeClasses[0] || classes[0] || INITIAL_CLASSES[0],
+    [activeClasses, classes, activeClassId]
+  );
+
+  // القسم المؤرشف المحدد للمعاينة (وضع القراءة والطباعة فقط)
+  const selectedArchivedClass = useMemo(
+    () => archivedClasses.find(c => c.id === selectedArchivedClassId) || archivedClasses[0] || null,
+    [archivedClasses, selectedArchivedClassId]
+  );
+
+  // قائمة المواسم الدراسية المتوفرة في الأرشيف
+  const availableArchiveYears = useMemo(() => {
+    const years = new Set<string>(['2026/2027', '2025/2026', '2024/2025']);
+    archivedClasses.forEach(c => {
+      if (c.academicYear) years.add(c.academicYear);
+    });
+    return Array.from(years);
+  }, [archivedClasses]);
+
+  // تصفية الأقسام المؤرشفة حسب الموسم الدراسي والبحث
+  const filteredArchivedClasses = useMemo(() => {
+    return archivedClasses.filter(cls => {
+      const matchesYear = archiveYearFilter === 'all' || (cls.academicYear || '2026/2027') === archiveYearFilter;
+      const q = archiveSearchQuery.trim();
+      if (!q) return matchesYear;
+      const normQ = normalizeArabic(q);
+      const matchText = normalizeArabic(`${cls.name} ${cls.level} ${cls.stream} ${cls.archiveNote || ''} ${cls.academicYear || ''}`);
+      return matchesYear && matchText.includes(normQ);
+    });
+  }, [archivedClasses, archiveYearFilter, archiveSearchQuery]);
+
+  // تصفية تلاميذ القسم المؤرشف المحدد في وضع القراءة والطباعة فقط
+  const filteredArchivedStudents = useMemo(() => {
+    if (!selectedArchivedClass) return [];
+    const hasSearch = Boolean(archivedStudentSearch.trim());
+    return selectedArchivedClass.students.filter(st => {
+      if (!hasSearch && archivedStudentGroupFilter !== 'all' && st.group !== archivedStudentGroupFilter) {
+        return false;
+      }
+      if (hasSearch && !matchesStudentQuery(st, archivedStudentSearch)) {
+        return false;
+      }
+      return true;
+    });
+  }, [selectedArchivedClass, archivedStudentSearch, archivedStudentGroupFilter]);
+
+  // فتح نافذة أرشفة القسم
+  const openArchiveClassModal = (cls: ClassGroup) => {
+    setArchiveModalClass(cls);
+    setArchiveForm({
+      academicYear: cls.academicYear || '2026/2027',
+      archiveNote: cls.archiveNote || ''
+    });
+  };
+
+  // تأكيد أرشفة القسم ونقله إلى خزانة الأرشيف مع إخفاء حصصه تلقائياً
+  const handleConfirmArchiveClass = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!archiveModalClass) return;
+    const targetId = archiveModalClass.id;
+    const targetName = archiveModalClass.name;
+    const today = new Date().toISOString().split('T')[0];
+    const year = archiveForm.academicYear.trim() || '2026/2027';
+    const note = archiveForm.archiveNote.trim();
+
+    const remainingActive = activeClasses.filter(c => c.id !== targetId);
+
+    setClasses(prev =>
+      prev.map(c =>
+        c.id === targetId
+          ? {
+              ...c,
+              isArchived: true,
+              archivedAt: today,
+              academicYear: year,
+              archiveNote: note
+            }
+          : c
+      )
+    );
+
+    if (activeClassId === targetId && remainingActive.length > 0) {
+      setActiveClassId(remainingActive[0].id);
+    }
+
+    setSelectedArchivedClassId(targetId);
+    setArchiveModalClass(null);
+    showNotice(`📦 تم نقل قسم «${targetName}» إلى أرشيف (${year}) وإخفاء حصصه من جدول التوقيت مع حفظ كافة البيانات!`);
+  };
+
+  // استعادة قسم من الأرشيف إلى الأقسام النشطة وإعادة إظهار حصصه في جدول التوقيت
+  const handleRestoreArchivedClass = (cls: ClassGroup) => {
+    setClasses(prev =>
+      prev.map(c =>
+        c.id === cls.id
+          ? {
+              ...c,
+              isArchived: false
+            }
+          : c
+      )
+    );
+    setActiveClassId(cls.id);
+    setClassesManagementMode('active');
+    showNotice(`✓ تمت استعادة قسم «${cls.name}» إلى لوحة القيادة النشطة وإعادة تفعيل حصصه في جدول التوقيت!`);
+  };
 
   // التلاميذ الذين تجاوزوا 3 غيابات غير مبررة (نظام التنبيهات المرئي)
   const studentsWithAbsenceAlert = useMemo(() => {
@@ -1668,17 +1906,18 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     showNotice('تم حذف الحصة من جدول التوقيت بنجاح.');
   };
 
-  // تصدير ملف الرقمنة
-  const exportDigitizationCSV = () => {
+  // تصدير ملف الرقمنة (يدعم القسم النشط أو أي قسم مؤرشف للقراءة والتصدير)
+  const exportDigitizationCSV = (targetClassOverride?: ClassGroup) => {
+    const targetCls = targetClassOverride || activeClass;
     const headers = [
       'الرقم', 'اللقب', 'الاسم', 'تاريخ الميلاد', 'الفوج', 'التقويم المستمر',
       'الأعمال التطبيقية', 'الفرض 1', 'الفرض 2', 'معدل الفروض', 'الاختبار', 'المعدل الفصلي', 'الملاحظة التربوية'
     ];
-    const rows = activeClass.students.map((s, idx) => {
+    const rows = targetCls.students.map((s, idx) => {
       const cc = calcContinuousScore(s.bonusPoints);
       const testsAvg = ((s.test1 + s.test2) / 2).toFixed(2);
-      const finalAvg = calcStudentAverage(s, activeClass.hasTP);
-      const remark = s.remark || generateSmartRemark(s, activeClass.hasTP);
+      const finalAvg = calcStudentAverage(s, targetCls.hasTP);
+      const remark = s.remark || generateSmartRemark(s, targetCls.hasTP);
       return [
         idx + 1, `"${s.lastName}"`, `"${s.firstName}"`, s.birthDate, s.group,
         cc, s.tpScore, s.test1, s.test2, testsAvg, s.exam, finalAvg, `"${remark}"`
@@ -1690,11 +1929,12 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `حجز_نقاط_الرقمنة_${activeClass.name}_${teacherProfile.subject}.csv`);
+    const suffix = targetCls.isArchived ? `_أرشيف_${targetCls.academicYear || ''}` : '';
+    link.setAttribute('download', `حجز_نقاط_الرقمنة_${targetCls.name}${suffix}_${teacherProfile.subject}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showNotice('تم تصدير ملف الرقمنة بنجاح!');
+    showNotice(`تم تصدير ملف الرقمنة لقسم ${targetCls.name} بنجاح!`);
   };
 
   // إجمالي عدد التلاميذ في كافة الأقسام
@@ -2709,7 +2949,20 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   <div>
                     <p className="text-xs text-slate-500 mb-1">المادة المسندة</p>
                     <p className="text-xl font-bold text-slate-800">{teacherProfile.subject}</p>
-                    <p className="text-xs text-blue-600 mt-1">{classes.length} أقسام مسندة</p>
+                    <p className="text-xs text-blue-600 mt-1 flex items-center gap-1.5 flex-wrap">
+                      <span>{activeClasses.length} أقسام نشطة</span>
+                      {archivedClasses.length > 0 && (
+                        <span
+                          onClick={() => {
+                            setActiveTab('classes');
+                            setClassesManagementMode('archive');
+                          }}
+                          className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 font-bold text-[10px] cursor-pointer hover:bg-amber-200 transition"
+                        >
+                          📦 +{archivedClasses.length} في الأرشيف
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
                     <GraduationCap className="w-6 h-6" />
@@ -2732,8 +2985,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
 
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-slate-500 mb-1">الحصص الأسبوعية</p>
-                    <p className="text-2xl font-bold text-slate-800">{timetableSessions.length} حصص</p>
+                    <p className="text-xs text-slate-500 mb-1">الحصص الأسبوعية النشطة</p>
+                    <p className="text-2xl font-bold text-slate-800">{activeTimetableSessions.length} حصص</p>
                     <p className="text-xs text-blue-600 mt-1 cursor-pointer hover:underline" onClick={() => setActiveTab('timetable')}>
                       جدول 8:00 إلى 17:00 ←
                     </p>
@@ -2772,7 +3025,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {timetableSessions.slice(0, 4).map(sess => (
+                    {activeTimetableSessions.slice(0, 4).map(sess => (
                       <div
                         key={sess.id}
                         onClick={() => handleSlotClick(sess.day, sess.startTime, sess)}
@@ -2904,8 +3157,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     <button
                       onClick={() => {
                         setTimetableActiveView('byClass');
-                        if (!timetableClassFilter && classes.length > 0) {
-                          setTimetableClassFilter(classes[0].name);
+                        if (!timetableClassFilter && activeClasses.length > 0) {
+                          setTimetableClassFilter(activeClasses[0].name);
                         }
                       }}
                       className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition flex items-center gap-1.5 ${
@@ -2928,7 +3181,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                         onChange={e => setTimetableClassFilter(e.target.value)}
                         className="bg-transparent font-black text-xs text-indigo-900 focus:outline-none cursor-pointer"
                       >
-                        {classes.map(c => (
+                        {activeClasses.map(c => (
                           <option key={c.id} value={c.name}>
                             {c.name} ({c.level} - {c.stream})
                           </option>
@@ -2958,7 +3211,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     <div className="flex items-center gap-2 font-bold font-mono">
                       {(() => {
                         const targetName = timetableClassFilter || activeClass.name;
-                        const classSessions = timetableSessions.filter(s => s.className === targetName);
+                        const classSessions = activeTimetableSessions.filter(s => s.className === targetName);
                         return (
                           <div className="flex items-center gap-2">
                             <span className="px-3 py-1 rounded-xl bg-white border border-indigo-200 text-indigo-900">
@@ -3085,7 +3338,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                       const currentDay = timetableDayFilter !== 'all' ? timetableDayFilter : 'الأحد';
                       return TIME_SLOTS.map((slot, slotIdx) => {
                         const targetClassName = timetableClassFilter || activeClass.name;
-                        const rawSession = timetableSessions.find(
+                        const rawSession = activeTimetableSessions.find(
                           s => s.day === currentDay && s.startTime === slot.start
                         );
                         const matchesCurrentClass = rawSession && rawSession.className === targetClassName;
@@ -3197,7 +3450,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                           </td>
                           {TIME_SLOTS.map((slot, slotIdx) => {
                             const targetClassName = timetableClassFilter || activeClass.name;
-                            const rawSession = timetableSessions.find(
+                            const rawSession = activeTimetableSessions.find(
                               s => s.day === day && s.startTime === slot.start
                             );
                             const matchesCurrentClass = rawSession && rawSession.className === targetClassName;
@@ -3937,16 +4190,534 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       )}
 
           {/* =========================================================
-              الشاشة 4: إدارة القوائم والـ OCR
+              الشاشة 4: إدارة القوائم والـ OCR + أرشيف الأقسام المنتهية
           ========================================================= */}
           {activeTab === 'classes' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="space-y-6">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-2">
-                    <Upload className="w-5 h-5 text-blue-600" />
-                    <span>المسح الضوئي الذكي لقائمة القسم (OCR)</span>
-                  </h3>
+            <div className="space-y-6">
+              {/* شريط التحكم العلوي: تبديل بين الأقسام النشطة وخزانة أرشيف الأقسام المنتهية + زر أرشفة القسم الحالي */}
+              <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3">
+                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-xs ${
+                    classesManagementMode === 'archive'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-blue-600 text-white'
+                  }`}>
+                    {classesManagementMode === 'archive' ? <Archive className="w-5 h-5" /> : <Users className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="font-black text-slate-900 dark:text-white text-base sm:text-lg">
+                        {classesManagementMode === 'archive'
+                          ? 'خزانة أرشيف الأقسام المنتهية (وضع القراءة والطباعة)'
+                          : 'إدارة القوائم، المسح الضوئي الذكي (OCR)، وأرشفة الأقسام'}
+                      </h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                        {activeClasses.length} نشط • {archivedClasses.length} مؤرشف
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      {classesManagementMode === 'archive'
+                        ? 'تصفح واطبع قوائم ونقاط الأقسام المؤرشفة حسب الموسم الدراسي، أو استعد أي قسم للوحة القيادة النشطة بنقرة واحدة.'
+                        : 'أدر قائمة التلاميذ الحالية أو انقل الأقسام المنتهية إلى الأرشيف لتنظيف لوحة القيادة وجدول التوقيت مع حفظ كافة البيانات.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* أزرار التبديل بين الأقسام النشطة وخزانة الأرشيف */}
+                  <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setClassesManagementMode('active')}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                        classesManagementMode === 'active'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>الأقسام النشطة ({activeClasses.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClassesManagementMode('archive');
+                        if (!selectedArchivedClassId && archivedClasses.length > 0) {
+                          setSelectedArchivedClassId(archivedClasses[0].id);
+                        }
+                      }}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                        classesManagementMode === 'archive'
+                          ? 'bg-amber-500 text-slate-950 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                      <span>أرشيف الأقسام المنتهية</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black ${
+                        classesManagementMode === 'archive'
+                          ? 'bg-slate-950 text-amber-400'
+                          : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
+                      }`}>
+                        {archivedClasses.length}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* زر أرشفة القسم النشط الحالي */}
+                  {classesManagementMode === 'active' && activeClasses.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => openArchiveClassModal(activeClass)}
+                      className="px-3.5 py-2 rounded-2xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                      title="نقل هذا القسم المنتهي إلى الأرشيف لتنظيف لوحة القيادة وجدول التوقيت مع حفظ كافة البيانات"
+                    >
+                      <Archive className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span>أرشفة قسم «{activeClass.name}»</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* شريط اختيار سريع بين الأقسام النشطة مع زر أرشفة مباشر لكل قسم */}
+              {classesManagementMode === 'active' && activeClasses.length > 0 && (
+                <div className="bg-slate-50 dark:bg-slate-900/60 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 ml-1">الأقسام النشطة في لوحة القيادة:</span>
+                    {activeClasses.map(cls => {
+                      const isCurr = cls.id === activeClass.id;
+                      return (
+                        <div
+                          key={cls.id}
+                          className={`inline-flex items-center rounded-xl border transition ${
+                            isCurr
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-blue-400'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setActiveClassId(cls.id)}
+                            className="px-3 py-1.5 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <span>{cls.name}</span>
+                            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                              isCurr ? 'bg-blue-700 text-blue-100' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'
+                            }`}>
+                              {cls.students.length} تلميذ
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openArchiveClassModal(cls);
+                            }}
+                            title={`نقل قسم ${cls.name} إلى الأرشيف`}
+                            className={`p-1.5 border-r transition cursor-pointer rounded-l-xl ${
+                              isCurr
+                                ? 'border-blue-500 text-blue-100 hover:bg-blue-700 hover:text-amber-300'
+                                : 'border-slate-100 dark:border-slate-700 text-slate-400 hover:bg-amber-50 hover:text-amber-600'
+                            }`}
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewClassModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-blue-50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-slate-700 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ قسم نشط جديد</span>
+                  </button>
+                </div>
+              )}
+
+              {/* في حال تم أرشفة جميع الأقسام النشطة */}
+              {classesManagementMode === 'active' && activeClasses.length === 0 && (
+                <div className="p-8 sm:p-10 rounded-3xl bg-white dark:bg-slate-900 border border-dashed border-amber-300 dark:border-amber-800 text-center space-y-4 max-w-2xl mx-auto">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto">
+                    <Archive className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                      لا توجد أقسام نشطة حالياً في لوحة القيادة
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {archivedClasses.length > 0
+                        ? `لديك ${archivedClasses.length} أقسام محفوظة بأمان في خزانة الأرشيف. يمكنك استعادة أي قسم منها أو إنشاء قسم جديد للموسم الحالي.`
+                        : 'يمكنك إنشاء قسم جديد للبدء في استيراد وإدارة قوائم التلاميذ.'}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setNewClassModal(true)}
+                      className="px-5 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>إنشاء قسم نشط جديد</span>
+                    </button>
+                    {archivedClasses.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setClassesManagementMode('archive')}
+                        className="px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                      >
+                        <ArchiveRestore className="w-4 h-4" />
+                        <span>فتح خزانة الأرشيف ({archivedClasses.length})</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* =========================================================
+                  الوضع أ: خزانة أرشيف الأقسام المنتهية (للقراءة والطباعة والاستعادة)
+              ========================================================= */}
+              {classesManagementMode === 'archive' && (
+                <div className="space-y-6 animate-fadeIn">
+                  {/* شريط الفلترة حسب الموسم الدراسي والبحث في الأرشيف */}
+                  <div className="bg-amber-50/70 dark:bg-slate-900 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/50 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                      <div className="relative flex-1">
+                        <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder="ابحث في الأرشيف باسم القسم، الشعبة، أو ملاحظة الأرشفة..."
+                          value={archiveSearchQuery}
+                          onChange={e => setArchiveSearchQuery(e.target.value)}
+                          className="w-full pr-9 pl-8 py-2 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                        {archiveSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setArchiveSearchQuery('')}
+                            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-300">الموسم الدراسي:</span>
+                      <select
+                        value={archiveYearFilter}
+                        onChange={e => setArchiveYearFilter(e.target.value)}
+                        className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 dark:border-slate-700 text-xs font-black text-slate-800 dark:text-white cursor-pointer"
+                      >
+                        <option value="all">جميع المواسم الدراسية ({archivedClasses.length})</option>
+                        {availableArchiveYears.map(yr => (
+                          <option key={yr} value={yr}>
+                            الموسم الدراسي {yr}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredArchivedClasses.length === 0 ? (
+                    <div className="p-10 rounded-3xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-3">
+                      <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+                        <Archive className="w-7 h-7" />
+                      </div>
+                      <h3 className="text-base font-black text-slate-800 dark:text-white">
+                        {archivedClasses.length === 0
+                          ? 'خزانة أرشيف الأقسام فارغة حالياً'
+                          : 'لا توجد أقسام مؤرشفة تطابق معايير البحث أو الموسم المحدد'}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                        يمكنك أرشفة أي قسم منتهٍ من تبويب «الأقسام النشطة» بالضغط على زر «أرشفة قسم» لتنظيف لوحة القيادة وجدول التوقيت مع الاحتفاظ بكامل نقاط وبيانات التلاميذ هنا.
+                      </p>
+                      {archivedClasses.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setClassesManagementMode('active')}
+                          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition cursor-pointer"
+                        >
+                          العودة إلى الأقسام النشطة
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {/* شبكة بطاقات الأقسام المؤرشفة */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredArchivedClasses.map(cls => {
+                          const isSelected = selectedArchivedClass?.id === cls.id;
+                          const clsAvg = (
+                            cls.students.reduce((sum, s) => sum + calcStudentAverage(s, cls.hasTP), 0) /
+                            (cls.students.length || 1)
+                          ).toFixed(2);
+                          const hiddenSessionsCount = timetableSessions.filter(
+                            s => s.classId === cls.id || s.className === cls.name
+                          ).length;
+
+                          return (
+                            <div
+                              key={cls.id}
+                              onClick={() => setSelectedArchivedClassId(cls.id)}
+                              className={`p-5 rounded-3xl border transition-all cursor-pointer flex flex-col justify-between gap-4 ${
+                                isSelected
+                                  ? 'bg-amber-50/60 dark:bg-slate-900 border-amber-500 ring-2 ring-amber-400/40 shadow-md'
+                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-300 shadow-xs'
+                              }`}
+                            >
+                              <div className="space-y-3">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h3 className="font-black text-base text-slate-900 dark:text-white">
+                                        {cls.name}
+                                      </h3>
+                                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-black font-mono bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                        📅 الموسم: {cls.academicYear || '2026/2027'}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                      {cls.level} • {cls.stream}
+                                    </p>
+                                  </div>
+
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center gap-1 shrink-0">
+                                    <Lock className="w-3 h-3 text-amber-600" />
+                                    <span>مؤرشف</span>
+                                  </span>
+                                </div>
+
+                                {cls.archiveNote && (
+                                  <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800/80 border border-amber-200/80 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300">
+                                    <span className="font-bold text-amber-700 dark:text-amber-400">📝 ملاحظة الأرشفة: </span>
+                                    <span>{cls.archiveNote}</span>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-3 gap-2 text-center text-xs pt-1">
+                                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                                    <span className="text-[10px] text-slate-400 block">عدد التلاميذ</span>
+                                    <strong className="font-mono font-black text-slate-800 dark:text-white">{cls.students.length}</strong>
+                                  </div>
+                                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                                    <span className="text-[10px] text-slate-400 block">متوسط القسم</span>
+                                    <strong className="font-mono font-black text-emerald-600 dark:text-emerald-400">{clsAvg}/20</strong>
+                                  </div>
+                                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                                    <span className="text-[10px] text-slate-400 block">حصص محفوظة</span>
+                                    <strong className="font-mono font-black text-blue-600 dark:text-blue-400">{hiddenSessionsCount}</strong>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-mono text-slate-400">
+                                  أُرشف يوم: {cls.archivedAt || '2026-10-20'}
+                                </span>
+                                <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedArchivedClassId(cls.id)}
+                                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                                  >
+                                    <Eye className="w-3.5 h-3.5 text-blue-600" />
+                                    <span>معاينة</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRestoreArchivedClass(cls)}
+                                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1 shadow-xs transition cursor-pointer"
+                                    title="استعادة القسم إلى لوحة القيادة النشطة مع إظهار حصصه في جدول التوقيت"
+                                  >
+                                    <ArchiveRestore className="w-3.5 h-3.5" />
+                                    <span>استعادة للقسم النشط</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* لوحة معاينة القسم المؤرشف (وضع القراءة والطباعة والتصدير فقط) */}
+                      {selectedArchivedClass && (
+                        <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-3xl border-2 border-amber-300 dark:border-amber-800/70 shadow-sm space-y-5">
+                          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-2.5 py-1 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 text-xs font-black flex items-center gap-1.5 border border-amber-300 dark:border-amber-800">
+                                  <Lock className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>سجل مؤرشف (للقراءة والطباعة فقط)</span>
+                                </span>
+                                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                                  قائمة ونتائج قسم {selectedArchivedClass.name} ({selectedArchivedClass.level} - {selectedArchivedClass.stream})
+                                </h3>
+                                <span className="text-xs font-mono font-bold text-slate-500">
+                                  • الموسم الدراسي {selectedArchivedClass.academicYear || '2026/2027'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                التعديل المباشر مقفل لحماية الأرشيف التاريخي. يمكنك البحث، طباعة الكشف، تصدير ملف الرقمنة CSV، أو استعادة القسم لتعديله.
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => window.print()}
+                                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                              >
+                                <Printer className="w-4 h-4 text-slate-500" />
+                                <span>طباعة قائمة الأرشيف</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => exportDigitizationCSV(selectedArchivedClass)}
+                                className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                              >
+                                <Download className="w-4 h-4" />
+                                <span>تصدير CSV / الرقمنة</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreArchivedClass(selectedArchivedClass)}
+                                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                              >
+                                <ArchiveRestore className="w-4 h-4" />
+                                <span>استعادة القسم للتعديل والتنشيط</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* شريط البحث والفلترة داخل القسم المؤرشف */}
+                          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
+                            <div className="relative flex-1 min-w-[200px]">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              <input
+                                type="text"
+                                placeholder="ابحث عن تلميذ داخل هذا القسم المؤرشف..."
+                                value={archivedStudentSearch}
+                                onChange={e => setArchivedStudentSearch(e.target.value)}
+                                className="w-full pr-8 pl-8 py-1.5 text-xs bg-white dark:bg-slate-900 rounded-xl border border-slate-300 dark:border-slate-700 font-semibold"
+                              />
+                              {archivedStudentSearch && (
+                                <button
+                                  type="button"
+                                  onClick={() => setArchivedStudentSearch('')}
+                                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={archivedStudentGroupFilter}
+                                onChange={e => setArchivedStudentGroupFilter(e.target.value === 'all' ? 'all' : Number(e.target.value) as 1 | 2)}
+                                className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                              >
+                                <option value="all">كل الأفواج ({selectedArchivedClass.students.length} تلميذ)</option>
+                                <option value={1}>الفوج 1 فقط</option>
+                                <option value={2}>الفوج 2 فقط</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* جدول القراءة والطباعة لتلاميذ القسم المؤرشف */}
+                          <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                            <table className="w-full text-right text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-800 text-white">
+                                  <th className="py-3 px-3">#</th>
+                                  <th className="py-3 px-3">اللقب والاسم</th>
+                                  <th className="py-3 px-2 text-center">الفوج</th>
+                                  <th className="py-3 px-2 text-center">كود الولي</th>
+                                  <th className="py-3 px-2 text-center">الغيابات</th>
+                                  <th className="py-3 px-2 text-center">التقويم المستمر</th>
+                                  {selectedArchivedClass.hasTP && <th className="py-3 px-2 text-center">الأعمال التطبيقية</th>}
+                                  <th className="py-3 px-2 text-center">الفرض 1</th>
+                                  <th className="py-3 px-2 text-center">الفرض 2</th>
+                                  <th className="py-3 px-2 text-center">الاختبار</th>
+                                  <th className="py-3 px-2 text-center">المعدل الفصلي</th>
+                                  <th className="py-3 px-3">الملاحظة التربوية</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                                {filteredArchivedStudents.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={selectedArchivedClass.hasTP ? 12 : 11} className="py-10 text-center text-slate-400">
+                                      لا يوجد تلاميذ مطابقون للبحث في هذا القسم المؤرشف.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  filteredArchivedStudents.map((st, idx) => {
+                                    const cc = calcContinuousScore(st.bonusPoints);
+                                    const avg = calcStudentAverage(st, selectedArchivedClass.hasTP);
+                                    return (
+                                      <tr key={st.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                        <td className="py-2.5 px-3 font-mono font-bold text-slate-400">{idx + 1}</td>
+                                        <td className="py-2.5 px-3 font-black text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                                          <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={archivedStudentSearch} />
+                                        </td>
+                                        <td className="py-2.5 px-2 text-center">
+                                          <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px]">
+                                            فوج {st.group}
+                                          </span>
+                                        </td>
+                                        <td className="py-2.5 px-2 text-center font-mono text-slate-600 dark:text-slate-400">{st.parentCode}</td>
+                                        <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-700 dark:text-slate-300">{st.absencesCount}</td>
+                                        <td className="py-2.5 px-2 text-center font-mono font-bold text-blue-700 dark:text-blue-400">{cc}</td>
+                                        {selectedArchivedClass.hasTP && (
+                                          <td className="py-2.5 px-2 text-center font-mono font-bold">{st.tpScore}</td>
+                                        )}
+                                        <td className="py-2.5 px-2 text-center font-mono font-bold">{st.test1}</td>
+                                        <td className="py-2.5 px-2 text-center font-mono font-bold">{st.test2}</td>
+                                        <td className="py-2.5 px-2 text-center font-mono font-bold">{st.exam}</td>
+                                        <td className="py-2.5 px-2 text-center">
+                                          <span className={`px-2 py-0.5 rounded-lg font-mono font-black text-xs ${
+                                            avg >= 14
+                                              ? 'bg-emerald-100 text-emerald-800'
+                                              : avg >= 10
+                                              ? 'bg-blue-100 text-blue-800'
+                                              : 'bg-rose-100 text-rose-800'
+                                          }`}>
+                                            {avg}
+                                          </span>
+                                        </td>
+                                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">
+                                          {st.remark || generateSmartRemark(st, selectedArchivedClass.hasTP)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* =========================================================
+                  الوضع ب: إدارة القوائم والـ OCR للقسم النشط الحالي
+              ========================================================= */}
+              {classesManagementMode === 'active' && activeClasses.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="space-y-6">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-2">
+                        <Upload className="w-5 h-5 text-blue-600" />
+                        <span>المسح الضوئي الذكي لقائمة القسم (OCR)</span>
+                      </h3>
                   <p className="text-xs text-slate-500 mb-4">
                     التقط صورة لقائمة القسم لتحويلها تلقائياً إلى قائمة رقمية تفاعلية:
                   </p>
@@ -3985,7 +4756,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                               setOcrErrorMsg(null);
                               showNotice(`✓ تم استخراج ${formatted.length} تلميذ حقيقي بنجاح من ورقة القائمة!`);
                             } else {
-                              const friendlyMsg = data.message || 'تعذر قراءة الأسماء حالياً بسبب ضغط مؤقت على الخادم، يرجى إعادة المحاولة.';
+                              const friendlyMsg = formatFriendlyOcrError(data.message);
                               setScannedPreview([]);
                               setOcrErrorMsg(friendlyMsg);
                               showNotice(`⚠️ ${friendlyMsg}`);
@@ -4056,7 +4827,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                                 setOcrErrorMsg(null);
                                 showNotice(`✓ تم استخراج ${formatted.length} تلميذ بنجاح!`);
                               } else {
-                                setOcrErrorMsg(data.message || 'تعذر قراءة القائمة، يرجى المحاولة مجدداً.');
+                                setOcrErrorMsg(formatFriendlyOcrError(data.message));
                               }
                             } catch {
                               setOcrErrorMsg('تعذر الاتصال بالخادم، يرجى المحاولة مجدداً.');
@@ -4833,6 +5604,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   </div>
                 )}
               </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -4869,7 +5642,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     <span>توليد الملاحظات التربوية آلياً</span>
                   </button>
                   <button
-                    onClick={exportDigitizationCSV}
+                    onClick={() => exportDigitizationCSV()}
                     className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm"
                   >
                     <Download className="w-4 h-4" />
@@ -5284,7 +6057,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           {activeTab === 'analytics' && (
             <AnalyticsSectionRedesign
               activeClass={activeClass}
-              allClasses={classes}
+              allClasses={activeClasses}
               onSelectClass={(classId) => {
                 setActiveClassId(classId);
                 setSelectedStudentForDiagnostic(null);
@@ -5308,7 +6081,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               الشاشة 8: قائمة المهام والالتزامات البيداغوجية للاستاذ
           ========================================================= */}
           {activeTab === 'todo' && (
-            <TeacherTodoList classes={classes} darkMode={darkMode} />
+            <TeacherTodoList classes={activeClasses} darkMode={darkMode} />
           )}
 
         </main>
@@ -5321,7 +6094,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         <TimetableSessionModal
           sessionForm={editingSessionForm}
           isNew={isNewSessionInSlot}
-          classes={classes}
+          classes={activeClasses}
           timeSlots={TIME_SLOTS}
           daysOfWeek={DAYS_OF_WEEK}
           onClose={() => setSessionEditModalOpen(false)}
@@ -5363,7 +6136,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       <ClassSelectorModal
         isOpen={isClassSelectorOpen}
         onClose={() => setIsClassSelectorOpen(false)}
-        classes={classes}
+        classes={activeClasses}
         activeClassId={activeClass.id}
         onSelectClass={(id) => {
           setActiveClassId(id);
@@ -5371,6 +6144,14 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         }}
         onAddNewClass={() => setNewClassModal(true)}
         maxClasses={10}
+        archivedCount={archivedClasses.length}
+        onOpenArchive={() => {
+          setActiveTab('classes');
+          setClassesManagementMode('archive');
+          if (!selectedArchivedClassId && archivedClasses.length > 0) {
+            setSelectedArchivedClassId(archivedClasses[0].id);
+          }
+        }}
       />
 
       {/* نافذة رصد وتعديل نقاط التلميذ التفاعلية للهاتف (المرحلة 5) */}
@@ -5507,6 +6288,118 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         />
       )}
 
+      {/* نافذة تأكيد أرشفة قسم وتحديد الموسم الدراسي والملاحظة */}
+      {archiveModalClass && (
+        <div className="fixed inset-0 z-[85] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-amber-300 dark:border-amber-800 space-y-4 animate-scaleUp text-right">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-xs">
+                  <Archive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 dark:text-white text-base">
+                    أرشفة قسم «{archiveModalClass.name}»
+                  </h3>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    نقل القسم المنتهي إلى خزانة الأرشيف مع حفظ كافة البيانات
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setArchiveModalClass(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-xl cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmArchiveClass} className="space-y-4">
+              {/* ملخص القسم المراد أرشفته */}
+              <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-slate-800/70 border border-amber-200 dark:border-slate-700 text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">المستوى والشعبة:</span>
+                  <strong className="text-slate-900 dark:text-white">{archiveModalClass.level} • {archiveModalClass.stream}</strong>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">عدد التلاميذ المسجلين:</span>
+                  <strong className="font-mono text-blue-700 dark:text-blue-400">{archiveModalClass.students.length} تلميذ</strong>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">حصص جدول التوقيت المرتبطة:</span>
+                  <strong className="font-mono text-emerald-700 dark:text-emerald-400">
+                    {timetableSessions.filter(s => s.classId === archiveModalClass.id || s.className === archiveModalClass.name).length} حصص (ستُخفى تلقائياً وتُستعاد عند الإلغاء)
+                  </strong>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  الموسم الدراسي للأرشيف:
+                </label>
+                <select
+                  value={archiveForm.academicYear}
+                  onChange={e => setArchiveForm({ ...archiveForm, academicYear: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-black text-slate-900 dark:text-white"
+                >
+                  <option value="2026/2027">الموسم الدراسي 2026/2027</option>
+                  <option value="2025/2026">الموسم الدراسي 2025/2026</option>
+                  <option value="2024/2025">الموسم الدراسي 2024/2025</option>
+                  <option value="2023/2024">الموسم الدراسي 2023/2024</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  ملاحظة أو سبب الأرشفة (اختياري):
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {['انتهاء الموسم الدراسي', 'انتهاء فترة التكليف/الاستخلاف', 'إعادة تفويج الأقسام'].map(reason => (
+                    <button
+                      key={reason}
+                      type="button"
+                      onClick={() => setArchiveForm(prev => ({ ...prev, archiveNote: reason }))}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-amber-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-amber-900 text-[11px] font-bold transition cursor-pointer"
+                    >
+                      + {reason}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  placeholder="مثال: قسم بكالوريا دفعة 2026 - نتائج الفصل الثالث مكتملة..."
+                  value={archiveForm.archiveNote}
+                  onChange={e => setArchiveForm({ ...archiveForm, archiveNote: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-white"
+                />
+              </div>
+
+              <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-[11px] text-blue-800 dark:text-blue-300 leading-relaxed">
+                💡 سيُحفظ القسم في وضع <strong>القراءة والطباعة فقط</strong> داخل خزانة الأرشيف، مع إخفاء حصصه من جدول التوقيت الأسبوعي وتنظيف لوحة القيادة، ويمكنك استعادته في أي وقت.
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setArchiveModalClass(null)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                >
+                  <Archive className="w-4 h-4" />
+                  <span>تأكيد النقل إلى الأرشيف</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* نافذة إضافة قسم جديد */}
       {newClassModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -5522,8 +6415,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               onSubmit={e => {
                 e.preventDefault();
                 if (!newClassForm.name.trim()) return;
-                if (classes.length >= 10) {
-                  showNotice('⚠️ تم بلوغ الحد الأقصى للأقسام المسندة (10 أقسام).');
+                if (activeClasses.length >= 10) {
+                  showNotice('⚠️ تم بلوغ الحد الأقصى للأقسام النشطة (10 أقسام). يمكنك أرشفة قسم منتهٍ لإضافة قسم جديد.');
                   setNewClassModal(false);
                   return;
                 }
@@ -5540,6 +6433,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 };
                 setClasses(prev => [...prev, created]);
                 setActiveClassId(created.id);
+                setClassesManagementMode('active');
                 setNewClassModal(false);
                 showNotice(`تم إنشاء قسم ${created.name}`);
               }}

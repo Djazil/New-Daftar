@@ -22,6 +22,7 @@ export default function StudentImportModal({
   
   // حالة المستند المرفوع ونتائج OCR
   const [file, setFile] = useState<File | null>(null);
+  const [lastPayload, setLastPayload] = useState<{ imageBase64: string; mimeType: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrError, setOcrError] = useState<string | null>(null);
@@ -68,6 +69,51 @@ export default function StudentImportModal({
 
   const [newItem, setNewItem] = useState({ firstName: '', lastName: '', group: 1 as 1 | 2 });
 
+  const formatCleanError = (msg?: string) => {
+    if (!msg) return 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً، يرجى الضغط على "إعادة المحاولة الآن".';
+    if (msg.includes('{') || msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand') || msg.includes('429')) {
+      return 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً. يرجى الضغط على "إعادة المحاولة الآن" بعد ثوانٍ قليلة.';
+    }
+    return msg;
+  };
+
+  const runOcrRequest = async (base64Data: string, mimeType: string) => {
+    setIsProcessing(true);
+    setOcrError(null);
+    setLastPayload({ imageBase64: base64Data, mimeType });
+
+    try {
+      const res = await fetch('/api/ocr/extract-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64Data,
+          mimeType
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      setIsProcessing(false);
+
+      if (res.ok && data.success && Array.isArray(data.students)) {
+        const extractedList = data.students.map((st: any, idx: number) => ({
+          firstName: st.firstName || 'تلميذ',
+          lastName: st.lastName || '',
+          group: (idx % 2 === 0 ? 1 : 2) as 1 | 2,
+          birthDate: '2008-05-01'
+        }));
+
+        setWorkingList(prev => [...prev, ...extractedList]);
+        setActiveTab('review');
+      } else {
+        setOcrError(formatCleanError(data.message));
+      }
+    } catch {
+      setIsProcessing(false);
+      setOcrError('تعذر الاتصال بخادم القراءة الذكية حالياً، يرجى الضغط على "إعادة المحاولة الآن".');
+    }
+  };
+
   // معالجة رفع الملف وإرساله إلى API الـ OCR السيرفري
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -78,37 +124,10 @@ export default function StudentImportModal({
     setOcrError(null);
 
     try {
-      // تحويل الملف إلى Base64
       const reader = new FileReader();
       reader.onload = async () => {
         const base64Data = reader.result as string;
-
-        // استدعاء API السيرفر
-        const res = await fetch('/api/ocr/extract-students', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: base64Data,
-            mimeType: selectedFile.type
-          })
-        });
-
-        const data = await res.json();
-        setIsProcessing(false);
-
-        if (res.ok && data.success && Array.isArray(data.students)) {
-          const extractedList = data.students.map((st: any) => ({
-            firstName: st.firstName || 'تلميذ',
-            lastName: st.lastName || '',
-            group: 1 as 1 | 2,
-            birthDate: '2008-05-01'
-          }));
-
-          setWorkingList(prev => [...prev, ...extractedList]);
-          setActiveTab('review');
-        } else {
-          setOcrError(data.message || 'لم نتمكن من التعرف على الأسماء في هذه الصورة. يرجى تجربة صورة أوضح أو اللصق اليدوي.');
-        }
+        await runOcrRequest(base64Data, selectedFile.type || 'image/jpeg');
       };
 
       reader.onerror = () => {
@@ -117,9 +136,9 @@ export default function StudentImportModal({
       };
 
       reader.readAsDataURL(selectedFile);
-    } catch (err: any) {
+    } catch {
       setIsProcessing(false);
-      setOcrError('حدث خطأ أثناء معالجة القائمة: ' + (err?.message || 'حاول مجدداً'));
+      setOcrError('حدث خطأ أثناء قراءة الصورة، يرجى المحاولة مجدداً.');
     }
   };
 
@@ -332,10 +351,31 @@ export default function StudentImportModal({
                 )}
               </div>
 
-              {ocrError && (
-                <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-300 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{ocrError}</span>
+              {ocrError && !isProcessing && (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
+                    <span className="font-bold leading-relaxed">{ocrError}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {lastPayload && (
+                      <button
+                        type="button"
+                        onClick={() => runOcrRequest(lastPayload.imageBase64, lastPayload.mimeType)}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>إعادة المحاولة الآن</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('manual')}
+                      className="px-3.5 py-2 rounded-xl bg-slate-200/80 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs transition cursor-pointer"
+                    >
+                      اللصق أو الإدخال اليدوي السريع
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
