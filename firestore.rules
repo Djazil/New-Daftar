@@ -2,26 +2,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // دالة التحقق من أن المستخدم مسجل الدخول
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // دالة التحقق من أن المستخدم هو المشرف الرئيسي djazild@gmail.com
-    function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.email != null && request.auth.token.email.lower() == 'djazild@gmail.com');
-    }
-
     // ==========================================
-    // 1. إدارة الحسابات والاشتراكات
+    // 1. ملفات المستخدمين (Users)
     // ==========================================
-    match /subscriptions/{subId} {
+    match /users/{userId} {
       allow read: if true;
       allow write: if true;
     }
 
-    match /deleted_subscriptions/{subId} {
+    // ==========================================
+    // 2. طلبات الاشتراك والتفعيل
+    // ==========================================
+    match /subscriptions/{subId} {
       allow read: if true;
       allow write: if true;
     }
@@ -30,12 +26,26 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /deleted_subscriptions/{docId} {
+      allow read, write: if true;
+    }
+
+    // ==========================================
+    // 3. بيانات الأساتذة والأقسام (Teachers)
+    // ==========================================
+    match /teachers/{teacherUid}/{document=**} {
+      allow read, write: if true;
+    }
+
+    // ==========================================
+    // 4. سجلات التدقيق الإداري
+    // ==========================================
     match /admin_audit_logs/{logId} {
       allow read, write: if true;
     }
 
     // ==========================================
-    // 2. اختبار الاتصال
+    // 5. اختبار الاتصال
     // ==========================================
     match /test/{docId} {
       allow read, write: if true;

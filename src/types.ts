@@ -114,6 +114,7 @@ export interface TeacherProfile {
 }
 
 export interface AuthUser {
+  uid?: string;
   email: string;
   name: string;
   avatar?: string;
@@ -198,4 +199,42 @@ export interface AdminAuditLog {
   details?: string;
   result: 'success' | 'failure';
 }
+
+export type ClassSessionStatus = 'active' | 'completed' | 'cancelled';
+
+export interface BehaviorTransaction {
+  id: string;
+  sessionId?: string;
+  teacherEmail?: string;
+  studentId: string;
+  studentName?: string;
+  delta: number;
+  reason: string;
+  timestamp: string;
+}
+
+export interface ClassSession {
+  id: string;
+  teacherEmail: string;
+  classId: string;
+  className: string;
+  level: Level;
+  subject: string;
+  date: string; // YYYY-MM-DD
+  dayOfWeek?: DayOfWeek;
+  startTime: string; // HH:MM
+  endTime?: string;
+  status: ClassSessionStatus;
+  topic?: string;
+  curriculumUnitId?: string;
+  attendance: Record<string, 'present' | 'absent' | 'late'>;
+  behaviorLogs: BehaviorTransaction[];
+  notes?: string;
+  teacherNotes?: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastSyncedAt?: string;
+}
+
+
 

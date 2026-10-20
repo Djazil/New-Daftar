@@ -3,10 +3,11 @@ import {
   Users, CheckCircle2, XCircle, Clock, BookOpen, FileText,
   AlertCircle, Check, Sparkles, Play, Pause, RotateCcw, Shuffle,
   Calendar, ChevronRight, ChevronLeft, Save, Search, School,
-  Award, MessageSquare, ShieldAlert, ArrowRight, Eye
+  Award, MessageSquare, ShieldAlert, ArrowRight, Eye, ThumbsUp, ThumbsDown, X
 } from 'lucide-react';
-import { Student, ClassGroup, CurriculumUnit } from '../types';
+import { Student, ClassGroup, CurriculumUnit, ClassSession, BehaviorTransaction } from '../types';
 import { matchesStudentQuery, HighlightMatch } from '../utils/searchUtils';
+import { autoSaveLiveSession, completeClassSessionAtomic } from '../services/sessionService';
 
 interface InClassManagerMobileProps {
   activeClass: ClassGroup;
@@ -16,6 +17,9 @@ interface InClassManagerMobileProps {
   onOpenClassSelector: () => void;
   onOpenStudentDetails: (student: Student) => void;
   teacherSubject: string;
+  teacherEmail?: string;
+  currentSession?: ClassSession | null;
+  onSessionCompleted?: (completedSession: ClassSession, updatedStudents: Student[]) => void;
   onSaveNotice?: (msg: string) => void;
 }
 
@@ -27,6 +31,9 @@ export default function InClassManagerMobile({
   onOpenClassSelector,
   onOpenStudentDetails,
   teacherSubject,
+  teacherEmail = '',
+  currentSession = null,
+  onSessionCompleted = () => {},
   onSaveNotice
 }: InClassManagerMobileProps) {
   // التبويب النشط داخل واجهة الحصة
@@ -46,14 +53,25 @@ export default function InClassManagerMobile({
 
   // بيانات موضوع الدرس والواجب
   const currentUnit = curriculum.find(u => u.level === activeClass.level && u.status === 'in-progress') || curriculum[0];
-  const [lessonTitle, setLessonTitle] = useState(() => currentUnit?.title || '');
+  const [lessonTitle, setLessonTitle] = useState(() => currentSession?.topic || currentUnit?.title || '');
   const [lessonContent, setLessonContent] = useState(() => currentUnit?.notes || '');
   const [homeworkText, setHomeworkText] = useState('');
   const [pedagogicalNote, setPedagogicalNote] = useState('');
 
-  // حالة الحفظ
+  // حالة الحفظ الحي
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'offline'>('saved');
   const [showAllPresentConfirm, setShowAllPresentConfirm] = useState(false);
+  const [showEndSessionConfirmModal, setShowEndSessionConfirmModal] = useState(false);
+
+  // نافذة رصد نقاط السلوك بلمسة واحدة
+  const [behaviorModalStudent, setBehaviorModalStudent] = useState<Student | null>(null);
+  const [behaviorDelta, setBehaviorDelta] = useState<number>(1);
+  const [behaviorReason, setBehaviorReason] = useState<string>('مشاركة ممتازة في الدرس');
+
+  // معاملات السلوك في هذه الحصة
+  const [sessionTransactions, setSessionTransactions] = useState<BehaviorTransaction[]>(() => {
+    return currentSession?.behaviorLogs || [];
+  });
 
   // تفعيل المؤقت
   React.useEffect(() => {
@@ -76,6 +94,7 @@ export default function InClassManagerMobile({
   const presentCount = students.filter(s => s.attendance === 'present').length;
   const absentCount = students.filter(s => s.attendance === 'absent').length;
   const lateCount = students.filter(s => s.attendance === 'late').length;
+  const unsetCount = students.filter(s => !s.attendance).length;
 
   // التلاميذ المفلترون
   const filteredStudents = useMemo(() => {
@@ -86,9 +105,33 @@ export default function InClassManagerMobile({
     });
   }, [students, groupFilter, searchQuery]);
 
+  // تحديث تلقائي حثيث للحصة الحية
+  const triggerAutoSave = (updatedStudents: Student[]) => {
+    setSaveStatus('saving');
+    if (currentSession) {
+      const attendanceMap: Record<string, 'present' | 'absent' | 'late'> = {};
+      updatedStudents.forEach(s => {
+        if (s.attendance) attendanceMap[s.id] = s.attendance;
+      });
+
+      const updatedSess: ClassSession = {
+        ...currentSession,
+        attendance: attendanceMap,
+        behaviorLogs: sessionTransactions,
+        topic: lessonTitle,
+        teacherNotes: pedagogicalNote
+      };
+
+      autoSaveLiveSession(updatedSess).then(ok => {
+        setSaveStatus(ok ? 'saved' : 'offline');
+      });
+    } else {
+      setTimeout(() => setSaveStatus('saved'), 350);
+    }
+  };
+
   // تغيير حالة تلميذ واحد
   const setStudentAttendanceStatus = (studentId: string, status: 'present' | 'absent' | 'late') => {
-    setSaveStatus('saving');
     const updated = students.map(s => {
       if (s.id === studentId) {
         const wasAbsent = s.attendance === 'absent';
@@ -109,36 +152,108 @@ export default function InClassManagerMobile({
     });
 
     onUpdateStudents(updated);
-    setTimeout(() => setSaveStatus('saved'), 350);
+    triggerAutoSave(updated);
   };
 
   // تعيين الكل حاضر مع تأكيد صريح
   const applyAllPresent = () => {
-    setSaveStatus('saving');
     const updated = students.map(s => ({
       ...s,
       attendance: 'present' as const
     }));
     onUpdateStudents(updated);
     setShowAllPresentConfirm(false);
-    setTimeout(() => setSaveStatus('saved'), 350);
+    triggerAutoSave(updated);
     if (onSaveNotice) onSaveNotice('تم تسجيل جميع تلاميذ القسم كـ «حاضر» بنجاح');
   };
 
-  // تطبيق إضافة أو خصم نقاط سريعة
-  const handleQuickBonus = (studentId: string, delta: number) => {
-    setSaveStatus('saving');
-    const updated = students.map(s => {
-      if (s.id === studentId) {
+  // إضافة معاملة نقاط سلوك جديدة مع منع التكرار
+  const handleAddBehaviorPoints = () => {
+    if (!behaviorModalStudent) return;
+
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newTx: BehaviorTransaction = {
+      id: txId,
+      studentId: behaviorModalStudent.id,
+      studentName: `${behaviorModalStudent.lastName} ${behaviorModalStudent.firstName}`,
+      delta: behaviorDelta,
+      reason: behaviorReason.trim() || 'مشاركة وسلوك في الدرس',
+      timestamp: new Date().toISOString(),
+      sessionId: currentSession?.id || 'live_session',
+      teacherEmail
+    };
+
+    const updatedTxs = [newTx, ...sessionTransactions];
+    setSessionTransactions(updatedTxs);
+
+    const updatedStudents = students.map(s => {
+      if (s.id === behaviorModalStudent.id) {
+        const newBonus = Number((s.bonusPoints + behaviorDelta).toFixed(2));
+        const newLogs = [
+          {
+            id: txId,
+            date: new Date().toISOString().split('T')[0],
+            type: behaviorDelta >= 0 ? ('positive' as const) : ('negative' as const),
+            reason: behaviorReason.trim() || 'سلوك في الحصة المباشرة',
+            delta: behaviorDelta,
+            parentAcknowledged: false
+          },
+          ...(s.logs || [])
+        ];
         return {
           ...s,
-          bonusPoints: Number((s.bonusPoints + delta).toFixed(2))
+          bonusPoints: newBonus,
+          logs: newLogs
         };
       }
       return s;
     });
-    onUpdateStudents(updated);
-    setTimeout(() => setSaveStatus('saved'), 350);
+
+    onUpdateStudents(updatedStudents);
+    triggerAutoSave(updatedStudents);
+
+    setBehaviorModalStudent(null);
+    if (onSaveNotice) {
+      onSaveNotice(`تم رصد (${behaviorDelta >= 0 ? `+${behaviorDelta}` : behaviorDelta}) نقطة سلوك للتلميذ ${behaviorModalStudent.lastName}`);
+    }
+  };
+
+  // الاعتماد النهائي لإنهاء الحصة الذري
+  const handleConfirmSessionCompletion = async () => {
+    setShowEndSessionConfirmModal(false);
+
+    const baseSession: ClassSession = currentSession || {
+      id: `session_${Date.now()}`,
+      teacherEmail,
+      level: activeClass.level,
+      classId: activeClass.id,
+      className: activeClass.name,
+      subject: teacherSubject || 'مادة التخصص',
+      date: new Date().toISOString().split('T')[0],
+      dayOfWeek: 'الأحد',
+      startTime: '08:00',
+      endTime: '09:00',
+      topic: lessonTitle,
+      status: 'active',
+      attendance: {},
+      behaviorLogs: sessionTransactions
+    };
+
+    const result = await completeClassSessionAtomic(baseSession, students, {
+      defaultUnsetAttendanceToPresent: true,
+      lessonTopic: lessonTitle,
+      teacherNotes: pedagogicalNote
+    });
+
+    if (result.success && result.completedSession) {
+      if (result.updatedStudents) {
+        onUpdateStudents(result.updatedStudents);
+      }
+      onSessionCompleted(result.completedSession, result.updatedStudents || students);
+      if (onSaveNotice) {
+        onSaveNotice(result.message);
+      }
+    }
   };
 
   // تشغيل القرعة العشوائية
@@ -159,9 +274,52 @@ export default function InClassManagerMobile({
     }, 90);
   };
 
+  // حالة تجاهل التذكير الذكي (30 دقيقة)
+  const [isSmartReminderDismissed, setIsSmartReminderDismissed] = useState(false);
+
+  // حساب الزمن المنقضي والتحقق من وجود أي سجل حضور أو نشاط للتلاميذ
+  const sessionElapsedSeconds = 3600 - timerSeconds;
+  const hasActivityLogged = absentCount > 0 || lateCount > 0 || sessionTransactions.length > 0 || students.some(s => s.attendance === 'absent' || s.attendance === 'late');
+  const showSmart30MinReminder = !isSmartReminderDismissed && !hasActivityLogged && sessionElapsedSeconds >= 1800;
+
   return (
     <div className="space-y-3.5 dir-rtl">
       
+      {/* شريط التذكير الذكي للحصة (30 دقيقة بدون نشاط) */}
+      {showSmart30MinReminder && (
+        <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 backdrop-blur-md text-amber-200 text-xs flex items-center justify-between gap-3 shadow-lg animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+              <Clock className="w-4 h-4 animate-pulse" />
+            </div>
+            <div>
+              <strong className="block text-white font-bold">تذكير ذكي: مضت 30 دقيقة على الحصة المباشرة دون تسجيل أي حضور أو نشاط</strong>
+              <span className="text-[11px] text-amber-200/90">يرجى رصد حضور وتأخر التلاميذ لتفادي نسيان حجز البيانات البيداغوجية.</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setActiveSection('attendance');
+                setIsSmartReminderDismissed(true);
+              }}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition cursor-pointer"
+            >
+              تسجيل الحضور الآن
+            </button>
+
+            <button
+              onClick={() => setIsSmartReminderDismissed(true)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition"
+              title="إغلاق التنبيه"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 1. الشريط العلوي للحصة: السنة، القسم، التاريخ، مؤقت الحصة، ومؤشر الحفظ الحي */}
       <div className="bg-slate-900 text-white rounded-3xl p-3.5 sm:p-5 shadow-xl border border-slate-800 space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -189,6 +347,27 @@ export default function InClassManagerMobile({
 
           {/* التاريخ ومؤقت الحصة وحالة الحفظ */}
           <div className="flex items-center gap-2 shrink-0">
+            
+            {/* مؤشر حالة الحفظ التلقائي الحي */}
+            <div className="hidden sm:flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800 text-[11px] font-bold">
+              {saveStatus === 'saving' ? (
+                <>
+                  <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                  <span className="text-amber-300">جارٍ الحفظ...</span>
+                </>
+              ) : saveStatus === 'offline' ? (
+                <>
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="text-rose-300">محفوظ محلياً</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300">تم الحفظ سحابياً ✓</span>
+                </>
+              )}
+            </div>
+
             {/* مؤقت الحصة المدمج */}
             <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800 text-xs">
               <Clock className="w-3.5 h-3.5 text-blue-400" />
@@ -199,368 +378,276 @@ export default function InClassManagerMobile({
                 className="p-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition cursor-pointer"
                 title={isTimerRunning ? 'إيقاف مؤقت' : 'تشغيل المؤقت'}
               >
-                {isTimerRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                {isTimerRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3 fill-white" />}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsTimerRunning(false);
-                  setTimerSeconds(3600);
-                }}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
-                title="إعادة ضبط المؤقت"
-              >
-                <RotateCcw className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* مؤشر الحفظ التلقائي الفوري */}
-            <div className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-bold text-slate-300">
-              <span className={`w-2 h-2 rounded-full ${saveStatus === 'saved' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
-              <span>{saveStatus === 'saved' ? 'محفوظ' : 'جارٍ الحفظ...'}</span>
             </div>
           </div>
         </div>
 
-        {/* شريط الإجراءات الخمسة الرئيسية في الحصة */}
-        <div className="grid grid-cols-5 gap-1 bg-slate-950/80 p-1 rounded-2xl border border-slate-800 text-center">
-          <button
-            type="button"
-            onClick={() => setActiveSection('attendance')}
-            className={`py-2 px-1 rounded-xl text-xs font-black transition flex flex-col items-center gap-1 cursor-pointer ${
-              activeSection === 'attendance'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-850'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span className="text-[11px] truncate">الحضور</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('lesson')}
-            className={`py-2 px-1 rounded-xl text-xs font-black transition flex flex-col items-center gap-1 cursor-pointer ${
-              activeSection === 'lesson'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-850'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            <span className="text-[11px] truncate">الدرس</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('homework')}
-            className={`py-2 px-1 rounded-xl text-xs font-black transition flex flex-col items-center gap-1 cursor-pointer ${
-              activeSection === 'homework'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-850'
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span className="text-[11px] truncate">الواجب</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('notes')}
-            className={`py-2 px-1 rounded-xl text-xs font-black transition flex flex-col items-center gap-1 cursor-pointer ${
-              activeSection === 'notes'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-850'
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" />
-            <span className="text-[11px] truncate">ملاحظة</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSection('finish')}
-            className={`py-2 px-1 rounded-xl text-xs font-black transition flex flex-col items-center gap-1 cursor-pointer ${
-              activeSection === 'finish'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-850'
-            }`}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span className="text-[11px] truncate">إنهاء</span>
-          </button>
+        {/* ملخص إحصائيات الحضور والسلوك الآنية */}
+        <div className="grid grid-cols-4 gap-2 text-center text-xs pt-1 border-t border-slate-800">
+          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-400 block">حاضر</span>
+            <span className="font-bold text-emerald-400">{presentCount}</span>
+          </div>
+          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-400 block">غائب</span>
+            <span className="font-bold text-rose-400">{absentCount}</span>
+          </div>
+          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-400 block">متأخر</span>
+            <span className="font-bold text-amber-400">{lateCount}</span>
+          </div>
+          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-400 block">نقاط السلوك</span>
+            <span className="font-bold text-blue-400 font-mono">{sessionTransactions.length}</span>
+          </div>
         </div>
       </div>
 
-      {/* 2. محتوى القسم المختار */}
-      
+      {/* 2. شريط التبويبات التنقلية بأسلوب لمسي أملس للهاتف */}
+      <div className="grid grid-cols-5 gap-1 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 text-xs font-bold text-center">
+        <button
+          type="button"
+          onClick={() => setActiveSection('attendance')}
+          className={`py-2.5 rounded-xl transition ${
+            activeSection === 'attendance' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          الحضور
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('lesson')}
+          className={`py-2.5 rounded-xl transition ${
+            activeSection === 'lesson' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          الدرس
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('homework')}
+          className={`py-2.5 rounded-xl transition ${
+            activeSection === 'homework' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          الواجب
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('notes')}
+          className={`py-2.5 rounded-xl transition ${
+            activeSection === 'notes' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          ملاحظة
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('finish')}
+          className={`py-2.5 rounded-xl transition ${
+            activeSection === 'finish' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          الإنهاء
+        </button>
+      </div>
+
       {/* =========================================================
-          قسم 1: تسجيل الحضور والغياب المباشر بأزرار لمس ثلاثية عريضة
+          قسم 1: تسجيل الحضور والغياب والسلوك
       ========================================================= */}
       {activeSection === 'attendance' && (
         <div className="space-y-3">
           
-          {/* شريط الإحصائيات الفورية وأزرار الإجراء السريع */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+          {/* أدوات الاختصار: زر "الكل حاضر"، أزرار الفلترة، والقرعة */}
+          <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap text-xs">
             
-            {/* عداد الحاضرين والغيابات */}
-            <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-bold">
-              <span className="px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40">
-                حاضر: <strong>{presentCount}</strong>
-              </span>
-              <span className="px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/40">
-                غائب: <strong>{absentCount}</strong>
-              </span>
-              <span className="px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40">
-                متأخر: <strong>{lateCount}</strong>
-              </span>
-            </div>
+            {/* زر الاختصار: الكل حاضر */}
+            <button
+              type="button"
+              onClick={() => setShowAllPresentConfirm(true)}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer min-h-[44px]"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>الكل حاضر ✓</span>
+            </button>
 
-            {/* زر الكل حاضر مع قرعة السبورة */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAllPresentConfirm(true)}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition flex items-center gap-1 cursor-pointer shadow-xs min-h-[40px]"
-                title="تسجيل جميع التلاميذ كحاضرين دفعة واحدة"
-              >
-                <Check className="w-4 h-4" />
-                <span>الكل حاضر ✓</span>
-              </button>
+            {/* القرعة العشوائية */}
+            <button
+              type="button"
+              onClick={triggerRandomPicker}
+              disabled={isPicking}
+              className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition flex items-center gap-1.5 shadow-md shadow-purple-600/20 cursor-pointer disabled:opacity-50 min-h-[44px]"
+            >
+              <Shuffle className={`w-4 h-4 ${isPicking ? 'animate-spin' : ''}`} />
+              <span>{isPicking ? 'جاري السحب...' : 'قرعة الأسئلة'}</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={triggerRandomPicker}
-                disabled={isPicking}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition flex items-center gap-1 cursor-pointer min-h-[40px]"
-                title="قرعة عشوائية لاختيار تلميذ للمشاركة على السبورة"
-              >
-                <Shuffle className={`w-3.5 h-3.5 ${isPicking ? 'animate-spin text-amber-500' : ''}`} />
-                <span className="hidden sm:inline">قرعة</span>
-              </button>
-            </div>
-          </div>
-
-          {/* نافذة تأكيد الكل حاضر */}
-          {showAllPresentConfirm && (
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 rounded-2xl flex items-center justify-between gap-3 text-xs animate-scaleUp">
-              <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-200 font-bold">
-                <AlertCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>هل تريد تطبيق حالة «حاضر» على جميع تلاميذ القسم ({students.length} تلميذ)؟</span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowAllPresentConfirm(false)}
-                  className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold cursor-pointer"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="button"
-                  onClick={applyAllPresent}
-                  className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black cursor-pointer shadow-xs"
-                >
-                  تأكيد التطبيق
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* التلميذ المختار بالقرعة إن وجد */}
-          {pickedStudent && (
-            <div className="p-3 bg-gradient-to-r from-amber-500/10 via-amber-400/20 to-amber-500/10 border border-amber-400 rounded-2xl flex items-center justify-between gap-2 animate-scaleUp">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-600 animate-bounce" />
-                <span className="text-xs font-black text-amber-950 dark:text-amber-200">
-                  تلميذ السبورة المختار: <strong className="text-sm text-blue-700 dark:text-blue-300">{pickedStudent.lastName} {pickedStudent.firstName}</strong> (فوج {pickedStudent.group})
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPickedStudent(null)}
-                className="text-xs text-slate-400 hover:text-slate-600 p-1"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* شريط الفلترة والبحث السريع بالحرف */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-bold shrink-0">
+            {/* أزرار تصفية الأفواج */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setGroupFilter('all')}
-                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 'all' ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-slate-600 dark:text-slate-400'}`}
+                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 'all' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold shadow-xs' : 'text-slate-500'}`}
               >
-                الكل ({students.length})
+                الكل
               </button>
               <button
                 type="button"
                 onClick={() => setGroupFilter(1)}
-                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 1 ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-slate-600 dark:text-slate-400'}`}
+                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 1 ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold shadow-xs' : 'text-slate-500'}`}
               >
                 فوج 1
               </button>
               <button
                 type="button"
                 onClick={() => setGroupFilter(2)}
-                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 2 ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-slate-600 dark:text-slate-400'}`}
+                className={`px-2.5 py-1 rounded-lg transition ${groupFilter === 2 ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold shadow-xs' : 'text-slate-500'}`}
               >
                 فوج 2
               </button>
             </div>
+          </div>
 
-            <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="ابحث بحرف أو اسم..."
-                className="w-full pr-8 pl-7 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs focus:outline-none focus:border-blue-500"
-              />
-              {searchQuery && (
+          {/* التلميذ المختار بالقرعة */}
+          {pickedStudent && (
+            <div className="p-3 bg-purple-950/40 border border-purple-500/40 rounded-2xl text-purple-200 text-xs flex items-center justify-between gap-2 animate-bounce">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <span className="text-[10px] text-purple-400 block font-bold">التلميذ المختار للإجابة:</span>
+                  <strong className="text-sm text-white font-black">{pickedStudent.lastName} {pickedStudent.firstName}</strong>
+                </div>
+              </div>
+              <button
+                onClick={() => onOpenStudentDetails(pickedStudent)}
+                className="px-3 py-1 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-500 transition"
+              >
+                عرض بطاقته
+              </button>
+            </div>
+          )}
+
+          {/* حقل البحث السريع عن اسم التلميذ */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="ابحث عن اسم التلميذ بالقسم..."
+              className="w-full pl-3.5 pr-10 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
+            />
+          </div>
+
+          {/* قائمة التلاميذ اللمسية العريضة للهاتف */}
+          <div className="space-y-2 max-h-[60dvh] overflow-y-auto pr-1">
+            {filteredStudents.map((st) => (
+              <div
+                key={st.id}
+                className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between gap-2 flex-wrap"
+              >
                 <button
                   type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute left-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
+                  onClick={() => onOpenStudentDetails(st)}
+                  className="flex items-center gap-2.5 text-right flex-1 min-w-0 cursor-pointer group"
                 >
-                  ✕
+                  <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center shrink-0">
+                    {st.seatIndex !== undefined ? st.seatIndex + 1 : '•'}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-black text-slate-900 dark:text-white block truncate group-hover:text-blue-500">
+                      <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={searchQuery} />
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono block">
+                      فوج {st.group} • رصيد السلوك: ({st.bonusPoints >= 0 ? `+${st.bonusPoints}` : st.bonusPoints})
+                    </span>
+                  </div>
                 </button>
-              )}
-            </div>
-          </div>
 
-          {/* قائمة أسماء التلاميذ مع أزرار اللمس الثلاثية العريضة المريحة */}
-          <div className="space-y-2">
-            {filteredStudents.length === 0 ? (
-              <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 space-y-1">
-                <Search className="w-6 h-6 mx-auto text-slate-300" />
-                <p className="font-bold">لا يوجد تلميذ يطابق هذا الحرف أو الفلتر</p>
-              </div>
-            ) : (
-              filteredStudents.map((st, idx) => {
-                const isPresent = st.attendance === 'present';
-                const isAbsent = st.attendance === 'absent';
-                const isLate = st.attendance === 'late';
-
-                return (
-                  <div
-                    key={st.id}
-                    className={`p-3 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
-                      isAbsent
-                        ? 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-300 dark:border-rose-900/50'
-                        : isLate
-                        ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-300 dark:border-amber-900/50'
-                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                {/* أزرار الحضور لمسية بعرض 44px لمكافحة الأخطاء */}
+                <div className="flex items-center gap-1 shrink-0">
+                  
+                  {/* حاضر */}
+                  <button
+                    type="button"
+                    onClick={() => setStudentAttendanceStatus(st.id, 'present')}
+                    className={`min-h-[44px] px-3 rounded-xl font-bold text-xs flex items-center gap-1 transition cursor-pointer ${
+                      st.attendance === 'present'
+                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-emerald-500/20'
                     }`}
                   >
-                    {/* اسم التلميذ قابل للنقر لفتح بطاقته الشاملة فوراً */}
-                    <div
-                      onClick={() => onOpenStudentDetails(st)}
-                      className="flex items-center gap-2.5 min-w-0 cursor-pointer group flex-1"
-                      title="انقر لفتح بطاقة التلميذ"
-                    >
-                      <span className="w-7 h-7 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold flex items-center justify-center shrink-0">
-                        {idx + 1}
-                      </span>
-                      <div className="min-w-0">
-                        <strong className="text-sm font-black text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition block truncate">
-                          <HighlightMatch text={`${st.lastName} ${st.firstName}`} query={searchQuery} />
-                        </strong>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          <span>فوج {st.group}</span>
-                          <span>• غيابات: {st.absencesCount}</span>
-                          {st.bonusPoints !== 0 && (
-                            <span className={st.bonusPoints > 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                              • رصيد: {st.bonusPoints > 0 ? `+${st.bonusPoints}` : st.bonusPoints}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="hidden sm:inline">حاضر</span>
+                  </button>
 
-                    {/* أزرار لمس ثلاثية عريضة حاضر / غائب / متأخر بارتفاع لا يقل عن 44px */}
-                    <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto">
-                      
-                      {/* زر حاضر */}
-                      <button
-                        type="button"
-                        onClick={() => setStudentAttendanceStatus(st.id, 'present')}
-                        className={`flex-1 sm:flex-initial min-w-[70px] min-h-[44px] px-3 py-2 rounded-xl text-xs font-black transition flex items-center justify-center gap-1 cursor-pointer ${
-                          isPresent
-                            ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-400/40'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60'
-                        }`}
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>حاضر</span>
-                      </button>
+                  {/* غائب */}
+                  <button
+                    type="button"
+                    onClick={() => setStudentAttendanceStatus(st.id, 'absent')}
+                    className={`min-h-[44px] px-3 rounded-xl font-bold text-xs flex items-center gap-1 transition cursor-pointer ${
+                      st.attendance === 'absent'
+                        ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-rose-500/20'
+                    }`}
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span className="hidden sm:inline">غائب</span>
+                  </button>
 
-                      {/* زر غائب */}
-                      <button
-                        type="button"
-                        onClick={() => setStudentAttendanceStatus(st.id, 'absent')}
-                        className={`flex-1 sm:flex-initial min-w-[70px] min-h-[44px] px-3 py-2 rounded-xl text-xs font-black transition flex items-center justify-center gap-1 cursor-pointer ${
-                          isAbsent
-                            ? 'bg-rose-600 text-white shadow-sm ring-2 ring-rose-400/40'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-rose-100 dark:hover:bg-rose-950/60'
-                        }`}
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>غائب</span>
-                      </button>
+                  {/* متأخر */}
+                  <button
+                    type="button"
+                    onClick={() => setStudentAttendanceStatus(st.id, 'late')}
+                    className={`min-h-[44px] px-3 rounded-xl font-bold text-xs flex items-center gap-1 transition cursor-pointer ${
+                      st.attendance === 'late'
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-amber-500/20'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span className="hidden sm:inline">متأخر</span>
+                  </button>
 
-                      {/* زر متأخر */}
-                      <button
-                        type="button"
-                        onClick={() => setStudentAttendanceStatus(st.id, 'late')}
-                        className={`flex-1 sm:flex-initial min-w-[70px] min-h-[44px] px-3 py-2 rounded-xl text-xs font-black transition flex items-center justify-center gap-1 cursor-pointer ${
-                          isLate
-                            ? 'bg-amber-500 text-slate-950 shadow-sm ring-2 ring-amber-400/40'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-amber-100 dark:hover:bg-amber-950/60'
-                        }`}
-                      >
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>متأخر</span>
-                      </button>
+                  {/* زر رصد نقطة سلوك بلمسة واحدة */}
+                  <button
+                    type="button"
+                    onClick={() => setBehaviorModalStudent(st)}
+                    className="min-h-[44px] px-2.5 rounded-xl bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white transition font-bold text-xs flex items-center justify-center shrink-0"
+                    title="رصد نقاط سلوك أو مشاركة"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                  </button>
 
-                      {/* زر إضافة نقطة سريعة للمشاركة */}
-                      <button
-                        type="button"
-                        onClick={() => handleQuickBonus(st.id, 0.5)}
-                        className="min-h-[44px] px-2.5 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 border border-blue-200 dark:border-blue-800 text-xs font-black transition cursor-pointer"
-                        title="إضافة 0.5 نقطة مشاركة فورية"
-                      >
-                        +0.5
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                </div>
+              </div>
+            ))}
           </div>
+
         </div>
       )}
 
       {/* =========================================================
-          قسم 2: موضوع الدرس وعناصر الحصة
+          قسم 2: موضوع وسير الدرس
       ========================================================= */}
       {activeSection === 'lesson' && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
           <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex items-center justify-between">
             <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-blue-600" />
-              <span>تسجيل موضوع وعناصر الحصة البيداغوجية</span>
+              <span>موضوع الدرس وعناصر المنهاج</span>
             </h3>
-            <span className="text-[11px] text-slate-400 font-mono">المادة: {teacherSubject}</span>
+            <span className="text-[11px] text-blue-600 font-bold bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-lg">
+              {activeClass.level}
+            </span>
           </div>
 
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
-                عنوان الدرس المنجز:
+                عنوان وموضوع الدرس الحالي:
               </label>
               <input
                 type="text"
@@ -570,31 +657,26 @@ export default function InClassManagerMobile({
                   setSaveStatus('saving');
                   setTimeout(() => setSaveStatus('saved'), 400);
                 }}
-                placeholder="مثال: المتابعة الزمنية لتحول كيميائي بالمعايرة اللونية..."
-                className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs sm:text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
+                placeholder="أدخل عنوان الدرس..."
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
               />
             </div>
 
             <div>
               <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1">
-                محتوى وعناصر الحصة المنجزة:
+                ملخص العناصر والأنشطة المنجزة:
               </label>
               <textarea
-                rows={3}
+                rows={4}
                 value={lessonContent}
                 onChange={e => {
                   setLessonContent(e.target.value);
                   setSaveStatus('saving');
                   setTimeout(() => setSaveStatus('saved'), 400);
                 }}
-                placeholder="العناصر المتناولة، النشاط المنجز، التمارين التطبيقية المحلولة على السبورة..."
+                placeholder="اكتب الأنشطة أو التجارب المخبرية المنجزة..."
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 leading-relaxed"
               />
-            </div>
-
-            <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-2xl border border-blue-200 dark:border-blue-900/50 flex items-center justify-between text-xs text-blue-900 dark:text-blue-200">
-              <span>الوحدة الحالية في المنهاج: <strong>{currentUnit?.title || 'غير محددة'}</strong></span>
-              <span className="text-[11px] text-blue-700 dark:text-blue-300 font-bold">الحجم المنجز: {currentUnit?.completedHours || 0} سا</span>
             </div>
           </div>
         </div>
@@ -626,16 +708,9 @@ export default function InClassManagerMobile({
                   setSaveStatus('saving');
                   setTimeout(() => setSaveStatus('saved'), 400);
                 }}
-                placeholder="مثال: حل التمارين 12 و15 صفحة 45 من الكتاب المدرسي، مع تحضير النشاط المخبري الخاص بالدارة RC..."
+                placeholder="مثال: حل التمارين 12 و15 صفحة 45 من الكتاب المدرسي..."
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 leading-relaxed"
               />
-            </div>
-
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 space-y-1">
-              <p className="font-bold">💡 نصيحة بيداغوجية:</p>
-              <p className="text-[11px] leading-relaxed">
-                يظهر هذا الواجب تلقائياً في فضاء أولياء الأمور عند إدخال كود التلميذ لمتابعة إنجاز واجبات أبنائهم في المنزل.
-              </p>
             </div>
           </div>
         </div>
@@ -666,7 +741,7 @@ export default function InClassManagerMobile({
                   setSaveStatus('saving');
                   setTimeout(() => setSaveStatus('saved'), 400);
                 }}
-                placeholder="سجل انطباعك عن تفاعل القسم، صعوبات التعلم الملاحظة، المقترحات لحصة المعالجة..."
+                placeholder="سجل انطباعك عن تفاعل القسم، صعوبات التعلم الملاحظة..."
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 leading-relaxed"
               />
             </div>
@@ -709,31 +784,181 @@ export default function InClassManagerMobile({
               </div>
             </div>
 
+            {unsetCount > 0 && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs">
+                <span>⚠️ تنبيه: توجد ({unsetCount}) حالات حضور لم تُحدد بعد. سيتم تعيينها تلقائياً كـ «حاضر» عند تأكيد الإنهاء.</span>
+              </div>
+            )}
+
             <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-1">
               <span className="text-[11px] text-slate-500 font-bold block">موضوع الدرس المسجل:</span>
               <p className="font-bold text-slate-900 dark:text-white">{lessonTitle || 'لم يتم تسجيل عنوان الدرس'}</p>
             </div>
 
-            {homeworkText && (
-              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-1">
-                <span className="text-[11px] text-slate-500 font-bold block">الواجب المقرر:</span>
-                <p className="text-slate-800 dark:text-slate-200">{homeworkText}</p>
-              </div>
-            )}
-
             <button
               type="button"
-              onClick={() => {
-                if (onSaveNotice) {
-                  onSaveNotice(`تم توثيق وإنهاء حصة قسم ${activeClass.name} بنجاح وحفظ كافة البيانات سحابياً.`);
-                }
-                setActiveSection('attendance');
-              }}
-              className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center justify-center gap-2"
+              onClick={() => setShowEndSessionConfirmModal(true)}
+              className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center justify-center gap-2"
             >
               <Check className="w-4 h-4" />
-              <span>تأكيد إنهاء وتوثيق الحصة البيداغوجية</span>
+              <span>تأكيد إنهاء وتوثيق الحصة البيداغوجية ➔</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* النافذة المنبثقة: تأكيد الاعتماد الذري لإنهاء الحصة */}
+      {showEndSessionConfirmModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-right">
+            
+            <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">تأكيد الاعتماد الذري لإنهاء الحصة</h3>
+                <span className="text-[10px] text-slate-400 block">قسم {activeClass.name} • {lessonTitle || 'درس جديد'}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 space-y-1.5 text-xs">
+              <div className="flex justify-between text-slate-300">
+                <span>الحاضرون المعُتمدون:</span>
+                <strong className="text-emerald-400">{presentCount + unsetCount} تلميذ</strong>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>الغيابات المسجلة:</span>
+                <strong className="text-rose-400">{absentCount} غيابات</strong>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>معاملات نقاط السلوك:</span>
+                <strong className="text-blue-400 font-mono">{sessionTransactions.length} معاملات</strong>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              عند التأكيد، سيتم توثيق الحضور والغياب ونقاط السلوك ونشر البيانات المسموح بها مباشرة لولي الأمر.
+            </p>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowEndSessionConfirmModal(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                تراجع للتعديل
+              </button>
+              
+              <button
+                type="button"
+                onClick={handleConfirmSessionCompletion}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>اعتماد وتوثيق الحصة الآن</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* النافذة المنبثقة: رصد نقاط السلوك بلمسة واحدة مع السبب */}
+      {behaviorModalStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-right">
+            
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-400" />
+                <h3 className="text-sm font-black text-white">
+                  رصد نقاط سلوك لـ {behaviorModalStudent.lastName} {behaviorModalStudent.firstName}
+                </h3>
+              </div>
+              <button type="button" onClick={() => setBehaviorModalStudent(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">نوع المعاملة والنقاط:</label>
+                <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setBehaviorDelta(1)}
+                    className={`py-2 rounded-xl border transition ${behaviorDelta === 1 ? 'bg-emerald-600 border-emerald-500 text-white shadow-md' : 'bg-slate-950 border-slate-800 text-slate-300'}`}
+                  >
+                    +1.0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBehaviorDelta(0.5)}
+                    className={`py-2 rounded-xl border transition ${behaviorDelta === 0.5 ? 'bg-emerald-600 border-emerald-500 text-white shadow-md' : 'bg-slate-950 border-slate-800 text-slate-300'}`}
+                  >
+                    +0.5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBehaviorDelta(-0.5)}
+                    className={`py-2 rounded-xl border transition ${behaviorDelta === -0.5 ? 'bg-rose-600 border-rose-500 text-white shadow-md' : 'bg-slate-950 border-slate-800 text-slate-300'}`}
+                  >
+                    -0.5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBehaviorDelta(-1)}
+                    className={`py-2 rounded-xl border transition ${behaviorDelta === -1 ? 'bg-rose-600 border-rose-500 text-white shadow-md' : 'bg-slate-950 border-slate-800 text-slate-300'}`}
+                  >
+                    -1.0
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">السبب المسجل (يظهر لولي الأمر):</label>
+                <input
+                  type="text"
+                  value={behaviorReason}
+                  onChange={e => setBehaviorReason(e.target.value)}
+                  placeholder="مثال: مشاركة ممتازة على السبورة"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setBehaviorModalStudent(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleAddBehaviorPoints}
+                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black shadow-md transition cursor-pointer"
+              >
+                تأكيد الرصد
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* تأكيد تعيين الكل حاضر */}
+      {showAllPresentConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl space-y-3 text-right">
+            <h3 className="text-sm font-black text-white">تسجيل جميع تلاميذ القسم كـ «حاضر»؟</h3>
+            <p className="text-xs text-slate-300">سيتم تعيين حالة جميع تلاميذ قسم {activeClass.name} كـ «حاضر». يمكنك تغيير حالة أي تلميذ غائب بشكل فردي بعد ذلك.</p>
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button onClick={() => setShowAllPresentConfirm(false)} className="px-3.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">إلغاء</button>
+              <button onClick={applyAllPresent} className="px-4 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black shadow-md">تأكيد الكل حاضر</button>
+            </div>
           </div>
         </div>
       )}

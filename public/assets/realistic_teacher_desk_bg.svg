@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Realistic Lighting Gradients -->
+    <radialGradient id="deskWarmLamp" cx="80%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.35"/>
+      <stop offset="40%" stop-color="#D97706" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#020617" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="laptopBlueGlow" cx="30%" cy="60%" r="50%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.25"/>
+      <stop offset="60%" stop-color="#6366F1" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="woodTexture" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E1B18"/>
+      <stop offset="50%" stop-color="#14110F"/>
+      <stop offset="100%" stop-color="#090807"/>
+    </linearGradient>
+
+    <linearGradient id="laptopMetallic" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="50%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+
+    <linearGradient id="plannerPaper" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+
+    <filter id="cozyBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" />
+    </filter>
+
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.7"/>
+    </filter>
+  </defs>
+
+  <!-- Deep Dark Base Atmosphere -->
+  <rect width="1920" height="1080" fill="#030712"/>
+
+  <!-- Realistic Wooden Desk Surface Perspective -->
+  <path d="M 0 520 L 1920 520 L 1920 1080 L 0 1080 Z" fill="url(#woodTexture)"/>
+  <line x1="0" y1="520" x2="1920" y2="520" stroke="#334155" stroke-opacity="0.3" stroke-width="2"/>
+
+  <!-- Warm Desk Lamp Ambient Glow (Top Right) -->
+  <circle cx="1550" cy="200" r="600" fill="url(#deskWarmLamp)"/>
+
+  <!-- Laptop Display Ambient Glow (Bottom Left) -->
+  <circle cx="500" cy="650" r="500" fill="url(#laptopBlueGlow)"/>
+
+  <!-- Realistic Teacher Desk Elements (Photorealistic Vector Layout) -->
+  <!-- 1. Sleek Modern Laptop Open on Desk -->
+  <g filter="url(#softShadow)" transform="translate(260, 480)">
+    <!-- Laptop Base Keyboard Deck -->
+    <path d="M 60 220 L 540 220 L 590 320 L 10 320 Z" fill="url(#laptopMetallic)" stroke="#475569" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="230" y="295" width="140" height="18" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1"/>
+    
+    <!-- Laptop Display Screen -->
+    <rect x="90" y="20" width="420" height="200" rx="12" fill="#020617" stroke="#3B82F6" stroke-opacity="0.5" stroke-width="2"/>
+    <rect x="100" y="30" width="400" height="180" rx="8" fill="#0F172A"/>
+
+    <!-- Screen Mockup UI: Teacher Smart Dashboard -->
+    <rect x="110" y="40" width="380" height="24" rx="6" fill="#1E293B"/>
+    <circle cx="125" cy="52" r="3.5" fill="#EF4444"/>
+    <circle cx="135" cy="52" r="3.5" fill="#F59E0B"/>
+    <circle cx="145" cy="52" r="3.5" fill="#10B981"/>
+    <text x="475" y="56" font-family="sans-serif" font-size="10" font-weight="bold" fill="#60A5FA" text-anchor="end">الدفتر اليومي الذكي — قسم 3 علوم تجريبية 1</text>
+
+    <!-- Screen Stats Cards -->
+    <rect x="110" y="72" width="115" height="50" rx="8" fill="#1E293B" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="215" y="90" font-family="sans-serif" font-size="8" fill="#94A3B8" text-anchor="end">نسبة الحضور اليومية</text>
+    <text x="215" y="110" font-family="sans-serif" font-size="14" font-weight="bold" fill="#34D399" text-anchor="end">97.8%</text>
+
+    <rect x="235" y="72" width="115" height="50" rx="8" fill="#1E293B" stroke="#6366F1" stroke-opacity="0.3"/>
+    <text x="340" y="90" font-family="sans-serif" font-size="8" fill="#94A3B8" text-anchor="end">معدل القسم العام</text>
+    <text x="340" y="110" font-family="sans-serif" font-size="14" font-weight="bold" fill="#818CF8" text-anchor="end">15.85 / 20</text>
+
+    <rect x="360" y="72" width="130" height="50" rx="8" fill="#1E293B" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="480" y="90" font-family="sans-serif" font-size="8" fill="#94A3B8" text-anchor="end">التدرج الفصلي</text>
+    <text x="480" y="110" font-family="sans-serif" font-size="11" font-weight="bold" fill="#60A5FA" text-anchor="end">الوحدة 02: الكهرومغناطيسية</text>
+
+    <!-- Interactive Graph on Screen -->
+    <rect x="110" y="130" width="380" height="70" rx="8" fill="#0B0F19" stroke="white" stroke-opacity="0.08"/>
+    <path d="M 125 180 Q 200 140, 275 160 T 425 140 T 475 150" fill="none" stroke="#60A5FA" stroke-width="2.5"/>
+  </g>
+
+  <!-- 2. Teacher Lesson Planner Notebook & Pen (Right Side) -->
+  <g filter="url(#softShadow)" transform="translate(1080, 560)">
+    <!-- Notebook Pages -->
+    <rect x="0" y="0" width="340" height="240" rx="16" fill="url(#plannerPaper)" stroke="#475569" stroke-opacity="0.3" stroke-width="1.5"/>
+    <line x1="170" y1="0" x2="170" y2="240" stroke="#334155" stroke-width="2"/>
+    
+    <!-- Spiral Rings -->
+    <circle cx="170" cy="20" r="4" fill="#94A3B8"/>
+    <circle cx="170" cy="60" r="4" fill="#94A3B8"/>
+    <circle cx="170" cy="100" r="4" fill="#94A3B8"/>
+    <circle cx="170" cy="140" r="4" fill="#94A3B8"/>
+    <circle cx="170" cy="180" r="4" fill="#94A3B8"/>
+    <circle cx="170" cy="220" r="4" fill="#94A3B8"/>
+
+    <!-- Handwritten Lesson Notes Text Lines -->
+    <g opacity="0.6" fill="#94A3B8" font-family="sans-serif" font-size="10" font-weight="bold">
+      <text x="320" y="35" text-anchor="end">مخطط الدرس: الميكانيك والطاقة</text>
+      <text x="320" y="65" text-anchor="end">• إنجاز التجربة رقم 03 في المخبر</text>
+      <text x="320" y="95" text-anchor="end">• تقويم المكتسبات القبلية للتلاميذ</text>
+      <text x="320" y="125" text-anchor="end">• تسليم مواضيع البكالوريا الموجهة</text>
+      
+      <text x="150" y="35" text-anchor="end">قسم 3 ع ت 2 (الفوج 1)</text>
+      <text x="150" y="65" text-anchor="end">الفرض الأول: 2026-10-24</text>
+      <text x="150" y="95" text-anchor="end">ملاحظات الانضباط: ممتاز ✓</text>
+    </g>
+
+    <!-- Elegant Metallic Pen resting on Notebook -->
+    <rect x="220" y="120" width="12" height="110" rx="6" fill="#3B82F6" stroke="#60A5FA" stroke-width="1" transform="rotate(-25, 220, 120)"/>
+    <polygon points="214,228 220,242 226,228" fill="#F59E0B" transform="rotate(-25, 220, 120)"/>
+  </g>
+
+  <!-- 3. Warm Coffee Cup on Coaster (Top Left) -->
+  <g filter="url(#softShadow)" transform="translate(140, 580)">
+    <circle cx="40" cy="40" r="38" fill="#1E293B" stroke="#334155" stroke-width="2"/>
+    <circle cx="40" cy="40" r="30" fill="#78350F"/>
+    <circle cx="40" cy="40" r="26" fill="#451A03"/>
+    <!-- Coffee Foam Art -->
+    <path d="M 32 36 C 36 28, 44 28, 48 36 C 44 44, 36 44, 32 36 Z" fill="#D97706" opacity="0.6"/>
+  </g>
+
+  <!-- Atmospheric Glass Grid overlay for Apple Tech Aesthetics -->
+  <g opacity="0.04" stroke="white" stroke-width="1">
+    <line x1="0" y1="200" x2="1920" y2="200"/>
+    <line x1="0" y1="400" x2="1920" y2="400"/>
+    <line x1="0" y1="600" x2="1920" y2="600"/>
+    <line x1="0" y1="800" x2="1920" y2="800"/>
+    <line x1="400" y1="0" x2="400" y2="1080"/>
+    <line x1="800" y1="0" x2="800" y2="1080"/>
+    <line x1="1200" y1="0" x2="1200" y2="1080"/>
+    <line x1="1600" y1="0" x2="1600" y2="1080"/>
+  </g>
+
+  <!-- Soft Vignette Outer Frame -->
+  <rect width="1920" height="1080" fill="none" stroke="#020617" stroke-width="60" opacity="0.8"/>
+</svg>

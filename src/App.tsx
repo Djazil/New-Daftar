@@ -9,10 +9,12 @@ import {
   Search, Bell, Settings, FileUp, ArrowUpDown, ArrowRight,
   GraduationCap, School, MapPin, ChevronDown, CheckSquare, Save,
   Maximize2, HelpCircle, Layers, ArrowRightLeft, BookMarked,
-  Trophy, Scale, TrendingDown, Minus, Filter, LogOut,
+  Trophy, Scale, TrendingDown, Minus, Filter, LogOut, Box,
   HeartHandshake, Phone, MessageSquare, Share2, Copy, ExternalLink,
   Sun, Moon
 } from 'lucide-react';
+
+import { Classroom3DLab } from './components/Classroom3DLab';
 
 import {
   Level, Student, ClassGroup, CurriculumUnit, TimetableSession,
@@ -29,6 +31,7 @@ import {
 import LandingPage, { ADMIN_USER } from './LandingPage';
 import WelcomeSetupWizard from './WelcomeSetupWizard';
 import TeacherSubscriptionPage from './components/TeacherSubscriptionPage';
+import TeacherAppleLandingPage from './components/TeacherAppleLandingPage';
 import AdminSubscriptionManager from './components/AdminSubscriptionManager';
 import AnalyticsCharts from './components/AnalyticsCharts';
 import StudentDetailsModal from './components/StudentDetailsModal';
@@ -38,11 +41,18 @@ import InClassManagerMobile from './components/InClassManagerMobile';
 import StudentGradesModal from './components/StudentGradesModal';
 import TimetableSessionModal from './components/TimetableSessionModal';
 import TeacherTodoList from './components/TeacherTodoList';
+import NetworkErrorNotice from './components/NetworkErrorNotice';
+import TeacherSettingsModal from './components/TeacherSettingsModal';
+import BrandLogo from './components/BrandLogo';
+import FirstTimeTeacherWizard from './components/FirstTimeTeacherWizard';
 import {
   ADMIN_EMAIL, checkTeacherFeatureAccess, getTeacherSubscription,
   activateTeacherSubscription, fetchSubscriptionsFromServer,
-  registerOrUpdateGoogleUser
+  registerOrUpdateGoogleUser, submitSubscriptionRequestAsync,
+  syncTeacherDataToServer, loadTeacherDataFromServer
 } from './services/subscriptionService';
+import { fetchOrCreateUserProfileInFirestore, emailToDocKey, auth } from './services/firebaseSubscriptionService';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { matchesStudentQuery, HighlightMatch, normalizeArabic } from './utils/searchUtils';
 
 
@@ -347,14 +357,49 @@ export const generateSmartRemark = (s: Student, hasTP: boolean): string => {
 // ==========================================
 
 export default function App() {
-  // حالة تسجيل الدخول عبر Google
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
-    const saved = localStorage.getItem('teacher_auth_user_v1');
-    if (saved) {
-      try { return JSON.parse(saved); } catch {}
-    }
-    return null;
-  });
+  // حالة تسجيل الدخول عبر Firebase Auth و onAuthStateChanged
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseAuthUser) => {
+      setIsAuthLoading(true);
+      if (firebaseAuthUser) {
+        const email = firebaseAuthUser.email || '';
+        const name = firebaseAuthUser.displayName || email.split('@')[0] || 'أستاذ';
+        const avatar = firebaseAuthUser.photoURL || undefined;
+        const uid = firebaseAuthUser.uid;
+        const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+        const authUser: AuthUser = {
+          uid,
+          email,
+          name,
+          avatar,
+          isAdmin,
+          isActive: false
+        };
+
+        const userProf = await fetchOrCreateUserProfileInFirestore(authUser);
+        const status = userProf ? userProf.status : 'pending';
+        const isActive = status === 'active';
+
+        const verifiedUser: AuthUser = {
+          ...authUser,
+          uid,
+          isActive,
+          isAdmin: userProf?.role === 'admin' || isAdmin
+        };
+
+        setCurrentUser(verifiedUser);
+      } else {
+        setCurrentUser(null);
+      }
+      setIsAuthLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const [isWelcomeWizardOpen, setIsWelcomeWizardOpen] = useState(false);
   const [isParentPreviewOpen, setIsParentPreviewOpen] = useState(false);
@@ -374,8 +419,29 @@ export default function App() {
   const [absenceJustificationStudent, setAbsenceJustificationStudent] = useState<Student | null>(null);
   const [previewJustificationDoc, setPreviewJustificationDoc] = useState<string | null>(null);
 
-  // حالة الملف التعريفي
+  // حالة تحميل واستعادة بيانات الأستاذ لمنع فتح نموذج التهيئة بالخطأ أثناء تحديث الصفحة
+  const [isDataLoading, setIsDataLoading] = useState<boolean>(true);
+
+  // حالة الملف التعريفي للأستاذ
   const [teacherProfile, setTeacherProfile] = useState<TeacherProfile>(() => {
+    // محاولة قراءة التخزين المعزول أولاً
+    const initialUserJson = localStorage.getItem('teacher_auth_user_v1');
+    if (initialUserJson) {
+      try {
+        const u = JSON.parse(initialUserJson);
+        if (u && u.email) {
+          const key = u.email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          const namespacedSaved = localStorage.getItem(`teacher_profile_${key}`);
+          if (namespacedSaved) {
+            const parsed = JSON.parse(namespacedSaved);
+            if (parsed && typeof parsed.isFirstTimeSetupDone === 'boolean') {
+              return parsed;
+            }
+          }
+        }
+      } catch {}
+    }
+
     const saved = localStorage.getItem('teacher_profile_v3');
     if (saved) {
       try { return JSON.parse(saved); } catch {}
@@ -481,10 +547,11 @@ export default function App() {
   };
 
   // مخطط الجلوس وواجهة الحصة للهاتف [تعديل 5 والمرحلة 3]
-  const [inClassView, setInClassView] = useState<'touch' | 'seating' | 'list'>('touch');
+  const [inClassView, setInClassView] = useState<'touch' | 'seating' | 'list' | '3dLab'>('touch');
   const [isEditingSeating, setIsEditingSeating] = useState(false);
   const [seatingColumns, setSeatingColumns] = useState(4); // 4 أعمدة للطاولات
-  const [selectedSeatIndexToSwap, setSelectedSeatIndexToSwap] = useState<number | null>(null);
+  const [draggingSeatIdx, setDraggingSeatIdx] = useState<number | null>(null);
+  const [dragOverSeatIdx, setDragOverSeatIdx] = useState<number | null>(null);
   const [groupFilter, setGroupFilter] = useState<'all' | 1 | 2>('all');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -566,117 +633,168 @@ export default function App() {
   // [تحديث جديد: عرض جدول التوقيت العام أو توقيت المادة حسب القسم المحدد واليوم]
   const [timetableActiveView, setTimetableActiveView] = useState<'general' | 'byClass'>('general');
   const [timetableClassFilter, setTimetableClassFilter] = useState<string>('');
+
+  // [تحديث حماية الشبكة تعذر التحقق]: حالة انقطاع اتصال السيرفر وشاشة إعادة المحاولة
+  const [hasNetworkError, setHasNetworkError] = useState(false);
+  const [isRetryingNetwork, setIsRetryingNetwork] = useState(false);
   const [timetableDayFilter, setTimetableDayFilter] = useState<DayOfWeek | 'all'>('all');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // المسح الضوئي وإضافة تلميذ
   const [isScanning, setIsScanning] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrErrorMsg, setOcrErrorMsg] = useState<string | null>(null);
+  const [lastOcrPayload, setLastOcrPayload] = useState<{ base64: string; mimeType: string } | null>(null);
   const [scannedPreview, setScannedPreview] = useState<Array<{ firstName: string; lastName: string; birthDate: string; group: 1 | 2 }>>([]);
   const [newStudentForm, setNewStudentForm] = useState({ firstName: '', lastName: '', birthDate: '2008-05-01', group: 1 as 1 | 2 });
+
+  // شريط التقدم التدريجي أثناء قيام الـ OCR بمعالجة الصورة
+  useEffect(() => {
+    let interval: any = null;
+    if (isScanning) {
+      setOcrProgress(12);
+      interval = setInterval(() => {
+        setOcrProgress(prev => {
+          if (prev >= 92) return 92;
+          return Math.min(92, prev + Math.floor(Math.random() * 14) + 8);
+        });
+      }, 450);
+    } else {
+      setOcrProgress(100);
+      const resetTimer = setTimeout(() => setOcrProgress(0), 500);
+      return () => clearTimeout(resetTimer);
+    }
+    return () => clearInterval(interval);
+  }, [isScanning]);
 
   // حفظ محلي دائم مع عزل بيانات الأساتذة وفق قواعد الأمان (سيناريو 7)
   const teacherStorageKey = useMemo(() => {
     return currentUser ? currentUser.email.toLowerCase().replace(/[^a-z0-9]/g, '_') : 'guest';
   }, [currentUser?.email]);
 
-  // استرجاع بيانات الأستاذ المعزولة عند تبديل الحساب
+  // استرجاع بيانات الأستاذ المعزولة من السيرفر والتخزين الدائم (فقط إذا كان الحساب مفعلاً بمعترك active)
   useEffect(() => {
-    if (!currentUser) return;
-    const cleanKey = teacherStorageKey;
-    const savedClasses = localStorage.getItem(`teacher_classes_${cleanKey}`);
-    if (savedClasses) {
-      try {
-        setClasses(JSON.parse(savedClasses));
-      } catch {}
-    } else if (cleanKey !== 'djazild_gmail_com') {
-      // أستاذ جديد يحصل على أقسام خاصة به تماماً معزولة عن بقية الأساتذة
-      setClasses(INITIAL_CLASSES.map(cls => ({
-        ...cls,
-        id: `${cleanKey}_${cls.id}`,
-        name: `${cls.name} (${currentUser.name})`,
-        students: cls.students.map(st => ({
-          ...st,
-          id: `${cleanKey}_${st.id}`
-        }))
-      })));
+    if (!currentUser) {
+      setIsDataLoading(false);
+      return;
+    }
+    const access = checkTeacherFeatureAccess(currentUser.email);
+    if (access.status !== 'active') {
+      setIsWelcomeWizardOpen(false);
+      setIsDataLoading(false);
+      return;
     }
 
-    const savedProfile = localStorage.getItem(`teacher_profile_${cleanKey}`);
-    if (savedProfile) {
+    const cleanKey = teacherStorageKey;
+    setIsDataLoading(true);
+
+    // حاول قراءة التخزين المحلي فوراً أولاً لتفادي أي تذبذب بصري أثناء انتظار السيرفر
+    const savedLocalProfileStr = localStorage.getItem(`teacher_profile_${cleanKey}`) || localStorage.getItem('teacher_profile_v3');
+    if (savedLocalProfileStr) {
       try {
-        setTeacherProfile(JSON.parse(savedProfile));
+        const p = JSON.parse(savedLocalProfileStr);
+        if (p && typeof p.isFirstTimeSetupDone === 'boolean') {
+          setTeacherProfile(p);
+          if (p.isFirstTimeSetupDone) {
+            setIsWelcomeWizardOpen(false);
+          }
+        }
       } catch {}
-    } else {
-      setTeacherProfile({
-        name: currentUser.name,
-        subject: SUBJECTS[0],
-        highSchool: 'ثانوية الشهيد زيغود يوسف',
-        wilaya: 'الجزائر العاصمة',
-        isFirstTimeSetupDone: false
-      });
     }
+
+    loadTeacherDataFromServer(currentUser.email).then((serverData) => {
+      if (serverData && serverData.teacherProfile) {
+        setTeacherProfile(serverData.teacherProfile);
+        if (serverData.teacherProfile.isFirstTimeSetupDone) {
+          setIsWelcomeWizardOpen(false);
+        }
+        if (Array.isArray(serverData.classes)) {
+          setClasses(serverData.classes);
+        }
+        if (Array.isArray(serverData.curriculum)) {
+          setCurriculum(serverData.curriculum);
+        }
+        if (Array.isArray(serverData.timetableSessions)) {
+          setTimetableSessions(serverData.timetableSessions);
+        }
+      } else {
+        // قراءة التخزين المحلي كدعم احتياطي عند غياب بيانات السيرفر
+        const savedClasses = localStorage.getItem(`teacher_classes_${cleanKey}`);
+        if (savedClasses) {
+          try {
+            setClasses(JSON.parse(savedClasses));
+          } catch {}
+        } else if (cleanKey === 'djazild_gmail_com') {
+          // حساب المشرف العام يحفظ ويسترجع بياناته النموذجية
+          setClasses(INITIAL_CLASSES);
+        } else {
+          // الأستاذ العادي الجديد يبدأ بدون أي بيانات أو أقسام تجريبية
+          setClasses([]);
+        }
+
+        const savedProfile = localStorage.getItem(`teacher_profile_${cleanKey}`) || localStorage.getItem('teacher_profile_v3');
+        if (savedProfile) {
+          try {
+            const p = JSON.parse(savedProfile);
+            setTeacherProfile(p);
+            if (p.isFirstTimeSetupDone) {
+              setIsWelcomeWizardOpen(false);
+            }
+          } catch {}
+        } else {
+          // إذا كانت الأقسام موجودة بالفعل في التخزين، فهذا يعني أن الأستاذ أكمل الإعداد مسبقاً
+          const hasExistingClasses = (savedClasses && JSON.parse(savedClasses).length > 0) || cleanKey === 'djazild_gmail_com';
+          setTeacherProfile({
+            name: currentUser.name,
+            subject: SUBJECTS[0],
+            highSchool: 'ثانوية الشهيد زيغود يوسف',
+            wilaya: 'الجزائر العاصمة',
+            isFirstTimeSetupDone: hasExistingClasses
+          });
+          if (hasExistingClasses) {
+            setIsWelcomeWizardOpen(false);
+          }
+        }
+      }
+    }).finally(() => {
+      setIsDataLoading(false);
+    });
   }, [teacherStorageKey]);
 
-  // حفظ التعديلات في المساحة الخاصة بالأستاذ الحالي حصراً بنظام الحفظ متعدد المراحل
+  // مزامنة التعديلات خادمياً ومحلياً بنظام الحفظ التلقائي متعدد المستويات (فقط للحسابات النشطة active)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || isDataLoading) return;
+    const access = checkTeacherFeatureAccess(currentUser.email);
+    if (access.status !== 'active') {
+      return;
+    }
     setCloudSyncStatus('saving');
+
+    const payload = {
+      teacherProfile,
+      classes,
+      curriculum,
+      timetableSessions,
+      uploadedPDFs
+    };
+
     try {
       localStorage.setItem(`teacher_profile_${teacherStorageKey}`, JSON.stringify(teacherProfile));
-      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
-      return () => clearTimeout(timer);
-    } catch {
-      setCloudSyncStatus('offline');
-    }
-  }, [teacherProfile, teacherStorageKey]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    setCloudSyncStatus('saving');
-    try {
+      localStorage.setItem(`teacher_profile_v3`, JSON.stringify(teacherProfile));
       localStorage.setItem(`teacher_classes_${teacherStorageKey}`, JSON.stringify(classes));
-      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
-      return () => clearTimeout(timer);
-    } catch {
-      setCloudSyncStatus('offline');
-    }
-  }, [classes, teacherStorageKey]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    setCloudSyncStatus('saving');
-    try {
       localStorage.setItem(`teacher_curriculum_${teacherStorageKey}`, JSON.stringify(curriculum));
-      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
-      return () => clearTimeout(timer);
-    } catch {
-      setCloudSyncStatus('offline');
-    }
-  }, [curriculum, teacherStorageKey]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    setCloudSyncStatus('saving');
-    try {
       localStorage.setItem(`teacher_timetable_${teacherStorageKey}`, JSON.stringify(timetableSessions));
-      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
-      return () => clearTimeout(timer);
-    } catch {
-      setCloudSyncStatus('offline');
-    }
-  }, [timetableSessions, teacherStorageKey]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    setCloudSyncStatus('saving');
-    try {
       localStorage.setItem(`teacher_pdfs_${teacherStorageKey}`, JSON.stringify(uploadedPDFs));
-      const timer = setTimeout(() => setCloudSyncStatus('synced'), 400);
-      return () => clearTimeout(timer);
-    } catch {
-      setCloudSyncStatus('offline');
-    }
-  }, [uploadedPDFs, teacherStorageKey]);
+    } catch {}
+
+    syncTeacherDataToServer(currentUser.email, payload).then((ok) => {
+      if (ok) {
+        setCloudSyncStatus('synced');
+      } else {
+        setCloudSyncStatus('offline');
+      }
+    });
+  }, [teacherProfile, classes, curriculum, timetableSessions, uploadedPDFs, teacherStorageKey]);
 
   // حماية الأستاذ من الخروج أثناء وجود حفظ سحابي قيد التنفيذ
   useEffect(() => {
@@ -702,42 +820,80 @@ export default function App() {
     return () => clearInterval(interval);
   }, [timerActive, timerSeconds]);
 
-  // مزامنة الاشتراكات المركزية من السيرفر عند فتح التطبيق
-  useEffect(() => {
-    fetchSubscriptionsFromServer().then(() => {
+  // دالة إعادة محاولة الاتصال والتحقق من حالة الحساب عند انقطاع الشبكة
+  const handleRetryNetwork = async () => {
+    setIsRetryingNetwork(true);
+    try {
+      await fetchSubscriptionsFromServer();
       if (currentUser) {
-        registerOrUpdateGoogleUser(currentUser).then(() => {
-          setSubscriptionRefreshTick(t => t + 1);
-        });
-      } else {
-        setSubscriptionRefreshTick(t => t + 1);
+        await registerOrUpdateGoogleUser(currentUser);
       }
-    });
+      setHasNetworkError(false);
+      setSubscriptionRefreshTick(t => t + 1);
+      showNotice('تمت استعادة الاتصال بالسيرفر والتحقق من حالة الحساب بنجاح');
+    } catch {
+      setHasNetworkError(true);
+      showNotice('تعذر الاتصال بالسيرفر. يرجى التأكد من اتصال الإنترنت وإعادة المحاولة.');
+    } finally {
+      setIsRetryingNetwork(false);
+    }
+  };
+
+  // مزامنة الاشتراكات المركزية من السيرفر عند فتح التطبيق مع معالجة حماية انقطاع الشبكة
+  useEffect(() => {
+    fetchSubscriptionsFromServer()
+      .then(() => {
+        setHasNetworkError(false);
+        if (currentUser) {
+          registerOrUpdateGoogleUser(currentUser)
+            .then(() => {
+              setSubscriptionRefreshTick(t => t + 1);
+            })
+            .catch(() => {
+              // حظر الوصول مؤقتا عند تعذر قراءة حالة الحساب
+              setHasNetworkError(true);
+            });
+        } else {
+          setSubscriptionRefreshTick(t => t + 1);
+        }
+      })
+      .catch(() => {
+        setHasNetworkError(true);
+      });
   }, []);
 
-  // فتح نافذة إعدادات المادة والأقسام تلقائياً فور تفعيل الاشتراك إذا لم يُكمل الأستاذ الإعداد الأولي
+  // فتح نافذة إعدادات المادة والأقسام تلقائياً فقط للحساب المكتمل تفعيله ولم يكمل الإعداد
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && !isDataLoading) {
       const access = checkTeacherFeatureAccess(currentUser.email);
-      if (access.hasAccess && !teacherProfile.isFirstTimeSetupDone) {
+      if (access.status === 'active' && !teacherProfile.isFirstTimeSetupDone) {
         setIsWelcomeWizardOpen(true);
+      } else {
+        setIsWelcomeWizardOpen(false);
       }
     }
-  }, [currentUser, subscriptionRefreshTick, teacherProfile.isFirstTimeSetupDone]);
+  }, [currentUser, subscriptionRefreshTick, teacherProfile.isFirstTimeSetupDone, isDataLoading]);
 
   const showNotice = (msg: string) => {
     setNotificationMsg(msg);
     setTimeout(() => setNotificationMsg(null), 3500);
   };
 
-  // معالجات تسجيل الدخول والإعداد الأولي مع التحقق من الاشتراك
+  // معالجات تسجيل الدخول والإعداد الأولي مع الاعتماد الكامل على المعرف الفريد الثابت (Firebase Auth UID)
   const handleGoogleSignIn = async (user: AuthUser) => {
-    setCurrentUser(user);
-    localStorage.setItem('teacher_auth_user_v1', JSON.stringify(user));
-    const isAdmin = user.isAdmin || user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const firebaseUid = user.uid || auth.currentUser?.uid || emailToDocKey(user.email);
+    const userWithUid: AuthUser = {
+      ...user,
+      uid: firebaseUid
+    };
+
+    setCurrentUser(userWithUid);
+    localStorage.setItem('teacher_auth_user_v1', JSON.stringify(userWithUid));
+    const isAdmin = userWithUid.isAdmin || userWithUid.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
     
-    // تسجيل وتحديث الحساب تلقائياً في السيرفر ولوحة التحكم
-    await registerOrUpdateGoogleUser(user);
+    // تسجيل وتحديث الحساب تلقائياً في السيرفر ولوحة التحكم وفي Firestore users/{uid} بالحالة الافتراضية pending للأستاذ الجديد
+    await registerOrUpdateGoogleUser(userWithUid);
+    const userProfDoc = await fetchOrCreateUserProfileInFirestore(userWithUid);
 
     if (isAdmin) {
       localStorage.setItem('smart_notebook_is_admin_device', 'true');
@@ -748,17 +904,31 @@ export default function App() {
     } else {
       setTeacherProfile(prev => ({
         ...prev,
-        name: user.name
+        name: userWithUid.name
       }));
     }
 
-    const access = checkTeacherFeatureAccess(user.email);
+    const cleanUserKey = userWithUid.email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const savedUserProf = localStorage.getItem(`teacher_profile_${cleanUserKey}`) || localStorage.getItem('teacher_profile_v3');
+    let userSetupDone = teacherProfile.isFirstTimeSetupDone;
+    if (userProfDoc && typeof userProfDoc.isFirstTimeSetupDone === 'boolean') {
+      userSetupDone = userProfDoc.isFirstTimeSetupDone;
+    } else if (savedUserProf) {
+      try {
+        const parsedP = JSON.parse(savedUserProf);
+        if (typeof parsedP.isFirstTimeSetupDone === 'boolean') {
+          userSetupDone = parsedP.isFirstTimeSetupDone;
+        }
+      } catch {}
+    }
+
+    const access = checkTeacherFeatureAccess(userWithUid.email);
     if (access.hasAccess) {
-      setIsWelcomeWizardOpen(!teacherProfile.isFirstTimeSetupDone);
-      showNotice(`مرحباً بك يا ${user.name}! اشتراكك مفعل وساري المفعول.`);
+      setIsWelcomeWizardOpen(!userSetupDone);
+      showNotice(`مرحباً بك يا ${userWithUid.name}! اشتراكك مفعل وساري المفعول.`);
     } else {
       setIsWelcomeWizardOpen(false);
-      showNotice(`مرحباً بك يا ${user.name}! تم تسجيل حسابك بنجاح بانتظار التفعيل من المدير أو اختيار الخطة.`);
+      showNotice(`مرحباً بك يا ${userWithUid.name}! تم تسجيل حسابك بنجاح بانتظار التفعيل من المدير أو اختيار الخطة.`);
     }
     setSubscriptionRefreshTick(t => t + 1);
   };
@@ -784,7 +954,10 @@ export default function App() {
     setSubscriptionRefreshTick(t => t + 1);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch {}
     setCurrentUser(null);
     localStorage.removeItem('teacher_auth_user_v1');
     setIsWelcomeWizardOpen(false);
@@ -1361,7 +1534,39 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     showNotice(`تم حذف 4 مقاعد شاغرة (الإجمالي الجديد: ${current - 4} مقعد)`);
   };
 
-  const handleSeatClick = (seatIndex: number, currentStudent?: Student) => {
+  const handleSeatDrop = (fromSeat: number, toSeat: number) => {
+    setDraggingSeatIdx(null);
+    setDragOverSeatIdx(null);
+    if (fromSeat === toSeat) return;
+
+    setClasses(prev => {
+      const nextClasses = prev.map(cls => {
+        if (cls.id !== activeClass.id) return cls;
+        const updatedStudents = cls.students.map(st => {
+          if (st.seatIndex === fromSeat) return { ...st, seatIndex: toSeat };
+          if (st.seatIndex === toSeat) return { ...st, seatIndex: fromSeat };
+          return st;
+        });
+        return { ...cls, students: updatedStudents };
+      });
+
+      if (currentUser) {
+        const payload = {
+          teacherProfile,
+          classes: nextClasses,
+          curriculum,
+          timetableSessions,
+          uploadedPDFs
+        };
+        syncTeacherDataToServer(currentUser.email, payload);
+      }
+      return nextClasses;
+    });
+
+    showNotice(`✓ تم نقل المقعد (#${fromSeat + 1} ⇄ #${toSeat + 1}) بالسحب والإفلات وحفظه في Firestore!`);
+  };
+
+  const handleSeatClick = (_seatIndex: number, currentStudent?: Student) => {
     if (!isEditingSeating) {
       if (currentStudent) {
         setSelectedStudentId(currentStudent.id);
@@ -1369,29 +1574,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       }
       return;
     }
-
-    if (selectedSeatIndexToSwap === null) {
-      setSelectedSeatIndexToSwap(seatIndex);
-      showNotice(`تم تحديد المقعد رقم ${seatIndex + 1}. الآن اضغط على أي مقعد آخر للنقل أو التبديل.`);
-    } else {
-      const fromSeat = selectedSeatIndexToSwap;
-      const toSeat = seatIndex;
-
-      setClasses(prev =>
-        prev.map(cls => {
-          if (cls.id !== activeClass.id) return cls;
-          const updatedStudents = cls.students.map(st => {
-            if (st.seatIndex === fromSeat) return { ...st, seatIndex: toSeat };
-            if (st.seatIndex === toSeat) return { ...st, seatIndex: fromSeat };
-            return st;
-          });
-          return { ...cls, students: updatedStudents };
-        })
-      );
-
-      setSelectedSeatIndexToSwap(null);
-      showNotice(`تم نقل/تبديل الطاولة بنجاح!`);
-    }
+    showNotice(`اسحب بطاقة التلميذ وأفلتها فوق أي مقعد آخر لإعادة ترتيب الجلوس.`);
   };
 
   // القرعة العشوائية
@@ -1534,6 +1717,20 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // 0. عند تحميل مصادقة Firebase Auth أولاً وقبل عرض أي واجهة
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center font-sans dir-rtl">
+        <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center text-2xl font-black shadow-2xl shadow-blue-500/30 animate-pulse mb-4">
+          
+        </div>
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <h2 className="text-base font-bold text-white mb-1">جارٍ التحقق من حالة مصادقة الحساب (Firebase Auth)...</h2>
+        <p className="text-xs text-slate-400">التحقق الآمن من حالة التفعيل والصلاحيات</p>
+      </div>
+    );
+  }
+
   // 1. إذا لم يسجل الأستاذ الدخول، أو في وضع معاينة بوابة الأولياء
   if (!currentUser || isParentPreviewOpen) {
     return (
@@ -1570,18 +1767,61 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     );
   }
 
+  // 0. عند تعذر الاتصال بالسيرفر أو انقطاع القراءة لحماية بيانات الدفتر
+  if (hasNetworkError && currentUser) {
+    return (
+      <NetworkErrorNotice
+        onRetry={handleRetryNetwork}
+        isRetrying={isRetryingNetwork}
+      />
+    );
+  }
+
+  // 0.5 أثناء تحميل بيانات الأستاذ وجلسة الإعدادات من السيرفر والتخزين الدائم
+  if (currentUser && isDataLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center font-sans dir-rtl">
+        <div className="mb-4 animate-pulse">
+          <BrandLogo size="xl" showText={false} />
+        </div>
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <h2 className="text-base font-bold text-white mb-1">جارٍ استعادة بيانات الأستاذ والتأكد من إعدادات الحساب...</h2>
+        <p className="text-xs text-slate-400">الدفتر اليومي الذكي للأستاذ — مزامنة سحابية بنسبة 100%</p>
+      </div>
+    );
+  }
+
   // التحقق الحقيقي من حالة اشتراك الأستاذ وصلاحيات الوصول للميزات المدفوعة
   const accessCheck = checkTeacherFeatureAccess(currentUser.email);
 
-  // إذا لم يكن الاشتراك نشطاً (غير مشترك، قيد المراجعة، أو منتهي الصلاحية)
-  if (!accessCheck.hasAccess) {
+  // إذا لم تكن حالة الحساب نشطة تماماً في Firestore (active)، توجيه فوراً إلى صفحة انتظار التفعيل ومنع تحميل أي مكونات بيداغوجية
+  if (accessCheck.status !== 'active') {
+    const currentSub = getTeacherSubscription(currentUser.email);
     return (
       <div className="relative">
-        <TeacherSubscriptionPage
-          user={currentUser}
+        <TeacherAppleLandingPage
+          currentUser={currentUser}
+          currentSubscription={currentSub}
+          onRequestActivation={async (phone, note) => {
+            await submitSubscriptionRequestAsync(
+              currentUser.email,
+              currentUser.name || currentUser.email.split('@')[0],
+              'lifetime',
+              {
+                senderName: currentUser.name || currentUser.email,
+                phoneNumber: phone,
+                amount: 1000,
+                paidAt: new Date().toISOString(),
+                receiptNote: note || 'طلب تفعيل الوصول الدائم مقابل 1000 دج عبر بريدي موب',
+                sentViaWhatsApp: true
+              }
+            );
+            setSubscriptionRefreshTick(t => t + 1);
+            showNotice('تم إرسال طلب التفعيل بنجاح! يرجى إرسال صورة الوصل عبر واتساب لتأكيد التفعيل');
+            return true;
+          }}
           onLogout={handleLogout}
-          onRefreshStatus={() => setSubscriptionRefreshTick(t => t + 1)}
-          onOpenAdminPanel={() => setIsAdminManagerOpen(true)}
+          onRefreshSubscriptionStatus={() => setSubscriptionRefreshTick(t => t + 1)}
         />
         {isAdminManagerOpen && (
           <AdminSubscriptionManager
@@ -1594,16 +1834,37 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
     );
   }
 
-  // 2. إذا تم تفعيل الاشتراك ومطلوب إعداد المادة والأقسام مباشرة قبل دخول الدفتر
-  const shouldShowSetupWizard = isWelcomeWizardOpen || (accessCheck.hasAccess && !teacherProfile.isFirstTimeSetupDone);
+  // 2. إذا تم تفعيل الاشتراك ومطلوب إعداد المادة والأقسام (فقط في حال عدم إكمال التهيئة مسبقاً أو فتحها يدوياً)
+  const shouldShowSetupWizard = accessCheck.hasAccess && (!teacherProfile.isFirstTimeSetupDone || isWelcomeWizardOpen);
   if (shouldShowSetupWizard) {
     return (
       <div className={`relative min-h-screen ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
-        <WelcomeSetupWizard
-          user={currentUser}
-          initialProfile={teacherProfile}
-          initialClasses={classes}
-          onCompleteSetup={handleCompleteSetupWizard}
+        <FirstTimeTeacherWizard
+          initialName={currentUser.name}
+          onComplete={async (updatedProfile, updatedClasses) => {
+            const finalProfile = { ...updatedProfile, isFirstTimeSetupDone: true };
+            setTeacherProfile(finalProfile);
+            setClasses(updatedClasses);
+            setIsWelcomeWizardOpen(false);
+
+            const payload = {
+              teacherProfile: finalProfile,
+              classes: updatedClasses,
+              curriculum,
+              timetableSessions
+            };
+
+            const ok = await syncTeacherDataToServer(currentUser.email, payload);
+            try {
+              localStorage.setItem(`teacher_profile_${teacherStorageKey}`, JSON.stringify(finalProfile));
+              localStorage.setItem(`teacher_profile_v3`, JSON.stringify(finalProfile));
+              localStorage.setItem(`teacher_classes_${teacherStorageKey}`, JSON.stringify(updatedClasses));
+              localStorage.setItem(`teacher_classes_v3`, JSON.stringify(updatedClasses));
+            } catch {}
+
+            showNotice('تم حفظ إعدادات الأستاذ والأقسام نهائياً! أهلاً بك في الدفتر.');
+            return ok;
+          }}
         />
         {isAdminManagerOpen && (
           <AdminSubscriptionManager
@@ -1631,11 +1892,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       )}
 
       {/* الهيدر العلوي للهواتف المحمولة المخصص للعمل أثناء الحصة */}
-      <div className="md:hidden bg-slate-900 text-white p-2.5 sm:p-3 border-b border-slate-800 flex items-center justify-between sticky top-0 z-30 shadow-md no-print gap-2">
+      <div className="md:hidden bg-slate-900 text-white p-2 sm:p-3 border-b border-slate-800 flex items-center justify-between sticky top-0 z-30 shadow-md no-print gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-md shrink-0">
-            د
-          </div>
+          <BrandLogo size="sm" showText={false} />
           
           {/* زر تبديل واختيار القسم السريع للهاتف */}
           <button
@@ -1704,16 +1963,13 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         <div className="md:hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col justify-between p-4 animate-fadeIn no-print">
           <div className="bg-slate-900 rounded-2xl border border-slate-800 p-4 space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-white text-base">
-                  د
-                </div>
-                <div>
-                  <h3 className="font-black text-sm text-white">دفتر الأستاذ الذكي</h3>
-                  <p className="text-[10px] text-blue-400">{teacherProfile.subject} • {teacherProfile.highSchool}</p>
-                </div>
-              </div>
-              <button onClick={() => setIsMobileMenuOpen(false)} className="p-1.5 text-slate-400 hover:text-white">
+              <BrandLogo
+                size="sm"
+                showText={true}
+                subtitle={`${teacherProfile.subject} • ${teacherProfile.highSchool}`}
+                theme="dark"
+              />
+              <button onClick={() => setIsMobileMenuOpen(false)} className="p-1.5 text-slate-400 hover:text-white shrink-0">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1802,16 +2058,13 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       {/* الشريط الجانبي الثابت في الحواسيب (Sidebar) */}
       <aside className="hidden md:flex w-64 bg-slate-900 text-white flex-col justify-between shrink-0 shadow-xl z-20 no-print">
         <div>
-          <div className="p-5 border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-lg shadow-lg shadow-blue-600/30">
-                د
-              </div>
-              <div>
-                <h1 className="font-bold text-base leading-tight">دفتر الأستاذ الذكي</h1>
-                <span className="text-xs text-blue-400">الطور الثانوي الجزائري</span>
-              </div>
-            </div>
+          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+            <BrandLogo
+              size="md"
+              showText={true}
+              subtitle="الطور الثانوي الجزائري"
+              theme="dark"
+            />
           </div>
 
           <div className="p-3.5 border-b border-slate-800 bg-slate-800/40">
@@ -2220,8 +2473,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
               </button>
 
               <button
-                onClick={() => setIsWelcomeWizardOpen(true)}
-                title="تهيئة المادة والمؤسسة والأقسام"
+                onClick={() => setShowSettingsModal(true)}
+                title="إعدادات الأستاذ والمادة والأقسام ⚙️"
                 className="p-1.5 sm:p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/40 text-slate-600 dark:text-slate-300 hover:text-blue-600 transition cursor-pointer"
               >
                 <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -2250,13 +2503,30 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         {/* الشاشات */}
         <main className="p-4 md:p-6 flex-1 overflow-y-auto space-y-6">
 
-          {/* =========================================================
-              الشاشة 1: الصفحة الرئيسية ولوحة القيادة
-              [تعديل 1: معلومات عن الدفتر الذكي مع صورة معبرة في الخلفية بتصميم عصري]
-          ========================================================= */}
+          {/* تنبيه الأقسام الفارغة للأستاذ العادي */}
+          {classes.length === 0 && (
+            <div className="p-8 sm:p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-4 max-w-xl mx-auto my-6 shadow-sm">
+              <div className="w-16 h-16 mx-auto rounded-3xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                <School className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">لم تضف أي قائمة تلاميذ بعد</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  بدء استخدام الدفتر يتطلب إعداد أقسامك واستيراد أو إضافة قوائم تلاميذك.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSettingsModal(true)}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-2xl shadow-lg transition flex items-center justify-center gap-2 mx-auto cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة أول قائمة / تهيئة الأقسام</span>
+              </button>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              
               {/* واجهة عصرية معبرة للدفتر الذكي مع خلفية بيداغوجية تفاعلية */}
               <div className="relative overflow-hidden rounded-3xl bg-slate-950 text-white shadow-2xl border border-slate-800">
                 {/* طبقة الخلفية التعبيرية المستوحاة من بيئة التدريس والمخبر الرقمي */}
@@ -3057,6 +3327,18 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                     <List className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">القائمة التقليدية</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setInClassView('3dLab')}
+                    className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                      inClassView === '3dLab'
+                        ? 'bg-blue-600 text-white shadow-xs font-black'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Box className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="hidden sm:inline">المخبر 3D</span>
+                  </button>
                 </div>
               </div>
 
@@ -3072,6 +3354,12 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   onOpenStudentDetails={(st) => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
                   teacherSubject={teacherProfile.subject}
                   onSaveNotice={(msg) => showNotice(msg)}
+                />
+              ) : inClassView === '3dLab' ? (
+                <Classroom3DLab
+                  activeClass={activeClass}
+                  onSelectStudent={(st) => setSelectedStudentForDetails({ student: st, classInfo: activeClass })}
+                  onClose={() => setInClassView('seating')}
                 />
               ) : (
                 <div className="space-y-5">
@@ -3187,7 +3475,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                       <button
                         onClick={() => {
                           setIsEditingSeating(!isEditingSeating);
-                          setSelectedSeatIndexToSwap(null);
+                          setDraggingSeatIdx(null);
+                          setDragOverSeatIdx(null);
                         }}
                         className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition border ${
                           isEditingSeating
@@ -3196,7 +3485,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                         }`}
                       >
                         <Sliders className="w-3.5 h-3.5" />
-                        <span>{isEditingSeating ? '✓ إنهاء النقل' : 'تبديل ونقل المقاعد'}</span>
+                        <span>{isEditingSeating ? '✓ إنهاء وضع السحب' : 'سحب وإفلات المقاعد'}</span>
                       </button>
                     </div>
                   )}
@@ -3291,27 +3580,42 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                       {Array.from({ length: totalDesksCount }).map((_, seatIdx) => {
                         const st = activeClass.students.find(s => s.seatIndex === seatIdx);
                         const isSelected = selectedStudent?.id === st?.id;
-                        const isBeingSwapped = selectedSeatIndexToSwap === seatIdx;
+                        const isDropTarget = dragOverSeatIdx === seatIdx && draggingSeatIdx !== null && draggingSeatIdx !== seatIdx;
                         const hasActiveSearch = Boolean(searchQuery.trim());
 
                         if (!st) {
                           return (
                             <div
                               key={seatIdx}
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                if (dragOverSeatIdx !== seatIdx) setDragOverSeatIdx(seatIdx);
+                              }}
+                              onDragLeave={() => {
+                                if (dragOverSeatIdx === seatIdx) setDragOverSeatIdx(null);
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                const fromSeatStr = e.dataTransfer.getData('text/plain');
+                                const fromSeat = parseInt(fromSeatStr, 10);
+                                if (!isNaN(fromSeat)) {
+                                  handleSeatDrop(fromSeat, seatIdx);
+                                }
+                              }}
                               onClick={() => handleSeatClick(seatIdx)}
                               className={`p-3.5 rounded-2xl border-2 border-dashed transition flex flex-col items-center justify-center text-center h-28 cursor-pointer ${
-                                isBeingSwapped
-                                  ? 'bg-amber-100 border-amber-500'
+                                isDropTarget
+                                  ? 'border-blue-500 bg-blue-100/80 ring-2 ring-blue-400 scale-[1.02]'
                                   : isEditingSeating
-                                  ? 'border-blue-300 bg-blue-50/30 hover:bg-blue-50'
+                                  ? 'border-blue-300 bg-blue-50/30 hover:bg-blue-50/60'
                                   : hasActiveSearch
                                   ? 'border-slate-200 bg-slate-50/20 text-slate-300 opacity-25'
-                                  : 'border-slate-200 bg-slate-50/40 text-slate-400'
+                                  : 'border-slate-200 bg-slate-50/40 text-slate-400 hover:border-blue-300'
                               }`}
                             >
                               <span className="text-xs font-bold text-slate-400">طاولة #{seatIdx + 1}</span>
                               <span className="text-[10px] text-slate-400 mt-1">
-                                {isEditingSeating ? 'انقل تلميذاً هنا' : 'شاغر'}
+                                {isDropTarget ? 'أفلت البطاقة هنا' : isEditingSeating ? 'اسحب وأفلت هنا' : 'شاغر (اسحب تلميذاً هنا)'}
                               </span>
                             </div>
                           );
@@ -3319,8 +3623,8 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
 
                         const isMatchSearch = Boolean(hasActiveSearch && matchesStudentQuery(st, searchQuery));
                         const statusColor =
-                          isBeingSwapped
-                            ? 'border-amber-500 bg-amber-100 ring-2 ring-amber-400'
+                          isDropTarget
+                            ? 'border-blue-600 bg-blue-100/90 ring-2 ring-blue-400 scale-[1.02]'
                             : isMatchSearch
                             ? 'border-amber-500 bg-amber-100/90 ring-4 ring-amber-400 shadow-xl scale-[1.03] z-10'
                             : hasActiveSearch
@@ -3336,8 +3640,36 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                         return (
                           <div
                             key={st.id}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', seatIdx.toString());
+                              e.dataTransfer.effectAllowed = 'move';
+                              setDraggingSeatIdx(seatIdx);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingSeatIdx(null);
+                              setDragOverSeatIdx(null);
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              if (dragOverSeatIdx !== seatIdx) setDragOverSeatIdx(seatIdx);
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverSeatIdx === seatIdx) setDragOverSeatIdx(null);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const fromSeatStr = e.dataTransfer.getData('text/plain');
+                              const fromSeat = parseInt(fromSeatStr, 10);
+                              if (!isNaN(fromSeat)) {
+                                handleSeatDrop(fromSeat, seatIdx);
+                              }
+                            }}
                             onClick={() => handleSeatClick(seatIdx, st)}
-                            className={`p-3.5 rounded-2xl border-2 transition cursor-pointer flex flex-col justify-between ${statusColor}`}
+                            className={`p-3.5 rounded-2xl border-2 transition cursor-grab active:cursor-grabbing hover:scale-[1.01] flex flex-col justify-between ${statusColor} ${
+                              draggingSeatIdx === seatIdx ? 'opacity-40 scale-95 border-amber-500' : ''
+                            }`}
                           >
                             <div className="flex items-start justify-between gap-1">
                               <div>
@@ -3629,18 +3961,20 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                         const file = e.target.files?.[0];
                         if (!file) return;
                         setIsScanning(true);
+                        setOcrErrorMsg(null);
 
                         const reader = new FileReader();
                         reader.onload = async (ev) => {
                           const base64 = ev.target?.result as string;
+                          setLastOcrPayload({ base64, mimeType: file.type });
                           try {
                             const res = await fetch('/api/ocr/extract-students', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ imageBase64: base64, mimeType: file.type })
                             });
-                            const data = await res.json();
-                            if (data.success && Array.isArray(data.students) && data.students.length > 0) {
+                            const data = await res.json().catch(() => ({}));
+                            if (res.ok && data.success && Array.isArray(data.students) && data.students.length > 0) {
                               const formatted = data.students.map((st: any, idx: number) => ({
                                 lastName: (st.lastName || '').trim() || 'غير محدد',
                                 firstName: (st.firstName || '').trim() || 'تلميذ',
@@ -3648,14 +3982,19 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                                 group: (idx % 2 === 0 ? 1 : 2) as 1 | 2
                               }));
                               setScannedPreview(formatted);
+                              setOcrErrorMsg(null);
                               showNotice(`✓ تم استخراج ${formatted.length} تلميذ حقيقي بنجاح من ورقة القائمة!`);
                             } else {
-                              throw new Error(data.message || 'لم يتم العثور على أسماء واضحة في الصورة');
+                              const friendlyMsg = data.message || 'تعذر قراءة الأسماء حالياً بسبب ضغط مؤقت على الخادم، يرجى إعادة المحاولة.';
+                              setScannedPreview([]);
+                              setOcrErrorMsg(friendlyMsg);
+                              showNotice(`⚠️ ${friendlyMsg}`);
                             }
-                          } catch (err: any) {
-                            console.error('OCR Extraction error:', err);
+                          } catch {
+                            const netMsg = 'تعذر الاتصال بخادم القراءة الذكية، يرجى التحقق من الشبكة وإعادة المحاولة.';
                             setScannedPreview([]);
-                            showNotice(`⚠️ ${err.message || 'تعذر قراءة أسماء القائمة من الصورة. يرجى التأكد من وضوح تصوير القائمة وإعادة المحاولة.'}`);
+                            setOcrErrorMsg(netMsg);
+                            showNotice(`⚠️ ${netMsg}`);
                           } finally {
                             setIsScanning(false);
                           }
@@ -3667,44 +4006,271 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                   </label>
 
                   {isScanning && (
-                    <div className="mt-4 p-3 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold flex items-center gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>جاري القراءة بالذكاء الاصطناعي...</span>
+                    <div className="mt-4 p-4 rounded-2xl bg-blue-50/90 border border-blue-200 space-y-2.5 animate-fadeIn">
+                      <div className="flex items-center justify-between text-xs font-bold text-blue-800">
+                        <div className="flex items-center gap-2">
+                          <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                          <span>
+                            {ocrProgress < 35
+                              ? 'جاري تحسين وضوح الصورة وتجهيز المستند...'
+                              : ocrProgress < 75
+                              ? 'جاري قراءة الأسماء والألقاب بالذكاء الاصطناعي...'
+                              : 'جاري تدقيق القائمة وتوزيع الأفواج...'}
+                          </span>
+                        </div>
+                        <span className="font-mono text-blue-700">{ocrProgress}%</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-blue-200/70 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-500 rounded-full transition-all duration-300"
+                          style={{ width: `${ocrProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {ocrErrorMsg && !isScanning && (
+                    <div className="mt-4 p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-2">
+                      <p className="font-bold leading-relaxed">⚠️ {ocrErrorMsg}</p>
+                      {lastOcrPayload && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setIsScanning(true);
+                            setOcrErrorMsg(null);
+                            try {
+                              const res = await fetch('/api/ocr/extract-students', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ imageBase64: lastOcrPayload.base64, mimeType: lastOcrPayload.mimeType })
+                              });
+                              const data = await res.json().catch(() => ({}));
+                              if (res.ok && data.success && Array.isArray(data.students) && data.students.length > 0) {
+                                const formatted = data.students.map((st: any, idx: number) => ({
+                                  lastName: (st.lastName || '').trim() || 'غير محدد',
+                                  firstName: (st.firstName || '').trim() || 'تلميذ',
+                                  birthDate: '2008-05-01',
+                                  group: (idx % 2 === 0 ? 1 : 2) as 1 | 2
+                                }));
+                                setScannedPreview(formatted);
+                                setOcrErrorMsg(null);
+                                showNotice(`✓ تم استخراج ${formatted.length} تلميذ بنجاح!`);
+                              } else {
+                                setOcrErrorMsg(data.message || 'تعذر قراءة القائمة، يرجى المحاولة مجدداً.');
+                              }
+                            } catch {
+                              setOcrErrorMsg('تعذر الاتصال بالخادم، يرجى المحاولة مجدداً.');
+                            } finally {
+                              setIsScanning(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>إعادة المحاولة الآن</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
                   {scannedPreview.length > 0 && (
-                    <div className="mt-4 space-y-3">
-                      <div className="text-xs font-bold text-emerald-700 bg-emerald-50 p-2.5 rounded-lg border border-emerald-200">
-                        ✓ تم استخراج {scannedPreview.length} تلاميذ بنجاح:
+                    <div className="mt-4 p-4 rounded-2xl bg-emerald-50/70 border-2 border-emerald-300 space-y-3.5 animate-fadeIn">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 pb-2.5">
+                        <div>
+                          <div className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>مراجعة وتعديل بيانات الـ OCR ({scannedPreview.length} تلميذ)</span>
+                          </div>
+                          <p className="text-[11px] text-emerald-700 mt-0.5">
+                            يمكنك تصحيح أي لقب أو اسم أو تغيير الفوج أو حذف أي سطر قبل الاعتماد النهائي:
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScannedPreview(prev => [
+                                ...prev,
+                                { lastName: '', firstName: '', birthDate: '2008-05-01', group: 1 }
+                              ]);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                            title="إضافة تلميذ جديد إلى قائمة المراجعة"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>إضافة سطر</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScannedPreview(prev =>
+                                prev.map((item, i) => ({ ...item, group: (i % 2 === 0 ? 1 : 2) as 1 | 2 }))
+                              );
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 text-[11px] font-bold transition cursor-pointer"
+                            title="توزيع التلاميذ بالتناوب بين الفوج 1 والفوج 2"
+                          >
+                            توزيع الأفواج 1/2
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => {
-                          const currentCount = activeClass.students.length;
-                          const added: Student[] = scannedPreview.map((item, idx) => ({
-                            id: `ocr-${Date.now()}-${idx}`,
-                            firstName: item.firstName,
-                            lastName: item.lastName,
-                            birthDate: item.birthDate,
-                            group: item.group,
-                            seatIndex: (currentCount + idx) % totalDesksCount,
-                            attendance: 'present',
-                            absencesCount: 0,
-                            bonusPoints: 0,
-                            tpScore: 14, test1: 12, test2: 12, exam: 12,
-                            remark: '',
-                            parentCode: `STD-${Math.floor(1000 + Math.random() * 9000)}`,
-                            logs: [],
-                            otherSubjects: SAMPLE_MULTI_SUBJECTS_BAC(`${item.firstName} ${item.lastName}`)
-                          }));
-                          setClasses(prev => prev.map(c => c.id === activeClass.id ? { ...c, students: [...c.students, ...added] } : c));
-                          setScannedPreview([]);
-                          showNotice(`تم إضافة التلاميذ إلى ${activeClass.name}`);
-                        }}
-                        className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs"
-                      >
-                        اعتماد وإضافة للقسم
-                      </button>
+
+                      {/* جدول المراجعة اليدوية القابل للتعديل */}
+                      <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                        {scannedPreview.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="p-2.5 rounded-xl bg-white border border-emerald-200 shadow-2xs flex flex-col gap-2"
+                          >
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-800 font-mono font-black text-[11px] flex items-center justify-center shrink-0">
+                                {idx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                value={item.lastName}
+                                placeholder="اللقب"
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setScannedPreview(prev =>
+                                    prev.map((row, i) => (i === idx ? { ...row, lastName: val } : row))
+                                  );
+                                }}
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <input
+                                type="text"
+                                value={item.firstName}
+                                placeholder="الاسم"
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setScannedPreview(prev =>
+                                    prev.map((row, i) => (i === idx ? { ...row, firstName: val } : row))
+                                  );
+                                }}
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setScannedPreview(prev => prev.filter((_, i) => i !== idx));
+                                }}
+                                className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition shrink-0 cursor-pointer"
+                                title="حذف هذا السطر من القائمة المستخرجة"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 pl-1 pr-7">
+                              <div className="flex items-center gap-1.5 flex-1">
+                                <span className="text-[10px] text-slate-400 font-semibold">الميلاد:</span>
+                                <input
+                                  type="date"
+                                  value={item.birthDate}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setScannedPreview(prev =>
+                                      prev.map((row, i) => (i === idx ? { ...row, birthDate: val } : row))
+                                    );
+                                  }}
+                                  className="px-2 py-0.5 rounded-md border border-slate-200 text-[11px] text-slate-600 focus:outline-none focus:border-emerald-500"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setScannedPreview(prev =>
+                                      prev.map((row, i) => (i === idx ? { ...row, group: 1 } : row))
+                                    );
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                                    item.group === 1
+                                      ? 'bg-blue-600 text-white'
+                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  فوج 1
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setScannedPreview(prev =>
+                                      prev.map((row, i) => (i === idx ? { ...row, group: 2 } : row))
+                                    );
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                                    item.group === 2
+                                      ? 'bg-indigo-600 text-white'
+                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  فوج 2
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* أزرار الاعتماد النهائي أو الإلغاء */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const validItems = scannedPreview.filter(
+                              item => item.lastName.trim() || item.firstName.trim()
+                            );
+                            if (validItems.length === 0) {
+                              showNotice('يرجى التأكد من وجود اسم واحد على الأقل قبل الاعتماد.');
+                              return;
+                            }
+                            const currentCount = activeClass.students.length;
+                            const added: Student[] = validItems.map((item, idx) => ({
+                              id: `ocr-${Date.now()}-${idx}`,
+                              firstName: item.firstName.trim() || 'تلميذ',
+                              lastName: item.lastName.trim() || 'غير محدد',
+                              birthDate: item.birthDate || '2008-05-01',
+                              group: item.group,
+                              seatIndex: (currentCount + idx) % Math.max(totalDesksCount, currentCount + validItems.length),
+                              attendance: 'present',
+                              absencesCount: 0,
+                              bonusPoints: 0,
+                              tpScore: 14, test1: 12, test2: 12, exam: 12,
+                              remark: '',
+                              parentCode: `STD-${Math.floor(1000 + Math.random() * 9000)}`,
+                              logs: [],
+                              otherSubjects: SAMPLE_MULTI_SUBJECTS_BAC(`${item.firstName} ${item.lastName}`)
+                            }));
+                            setClasses(prev =>
+                              prev.map(c =>
+                                c.id === activeClass.id
+                                  ? {
+                                      ...c,
+                                      totalDesks: Math.max(c.totalDesks || 24, c.students.length + added.length),
+                                      students: [...c.students, ...added]
+                                    }
+                                  : c
+                              )
+                            );
+                            setScannedPreview([]);
+                            showNotice(`✓ تم اعتماد وإضافة ${added.length} تلميذاً بنجاح إلى ${activeClass.name}!`);
+                          }}
+                          className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Check className="w-4 h-4" />
+                          <span>اعتماد وإضافة للقسم ({scannedPreview.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setScannedPreview([])}
+                          className="py-2.5 px-3 rounded-xl bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 font-bold text-xs transition cursor-pointer"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -4745,10 +5311,6 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             <TeacherTodoList classes={classes} darkMode={darkMode} />
           )}
 
-
-
-
-
         </main>
       </div>
 
@@ -4916,296 +5478,33 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
       )}
 
 
-      {/* نافذة الإعدادات الشاملة المبسطة عبر 5 مجموعات واضحة (المرحلة 9) */}
+      {/* نافذة الإعدادات الشاملة المحدثة ⚙️ */}
       {showSettingsModal && (
-        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 dir-rtl animate-fadeIn">
-          <div
-            className="w-full sm:max-w-2xl bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[92vh] flex flex-col overflow-hidden animate-slideUp sm:animate-scaleUp"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* هيدر نافذة الإعدادات */}
-            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md">
-                  <Settings className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">إعدادات المنصة البيداغوجية</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">تخصيص بيانات الأستاذ، المواد، الأقسام، وحساب المعدلات</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+        <TeacherSettingsModal
+          teacherProfile={teacherProfile}
+          classes={classes}
+          onSave={async (updatedProfile, updatedClasses) => {
+            setTeacherProfile(updatedProfile);
+            setClasses(updatedClasses);
 
-            {/* شريط المجموعات الـ 5 (Tabs) */}
-            <div className="flex items-center gap-1 p-2 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 overflow-x-auto touch-scroll shrink-0">
-              {[
-                { id: 'profile', label: '1. بيانات الأستاذ', icon: User },
-                { id: 'subject', label: '2. المادة والمستوى', icon: BookOpen },
-                { id: 'classes', label: '3. إدارة الأقسام', icon: School },
-                { id: 'grading', label: '4. العلامات والتقويم', icon: Award },
-                { id: 'preferences', label: '5. العرض والتنبيهات', icon: Bell }
-              ].map(tab => {
-                const Icon = tab.icon;
-                const isActive = settingsActiveTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setSettingsActiveTab(tab.id as any)}
-                    className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0 ${
-                      isActive
-                        ? 'bg-blue-600 text-white shadow-sm font-black'
-                        : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            const payload = {
+              teacherProfile: updatedProfile,
+              classes: updatedClasses,
+              curriculum,
+              timetableSessions
+            };
 
-            {/* محتوى المجموعة المختارة */}
-            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 touch-scroll text-right">
-              
-              {/* المجموعة 1: بيانات الأستاذ والمؤسسة */}
-              {settingsActiveTab === 'profile' && (
-                <div className="space-y-4 animate-fadeIn">
-                  <div>
-                    <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                      اسم ولقب الأستاذ(ة):
-                    </label>
-                    <input
-                      type="text"
-                      value={teacherProfile.name}
-                      onChange={e => setTeacherProfile(p => ({ ...p, name: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+            const ok = await syncTeacherDataToServer(currentUser?.email || '', payload);
+            try {
+              localStorage.setItem(`teacher_profile_${teacherStorageKey}`, JSON.stringify(updatedProfile));
+              localStorage.setItem(`teacher_classes_${teacherStorageKey}`, JSON.stringify(updatedClasses));
+            } catch {}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                        المؤسسة الثانوية:
-                      </label>
-                      <input
-                        type="text"
-                        value={teacherProfile.highSchool}
-                        onChange={e => setTeacherProfile(p => ({ ...p, highSchool: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                        الولاية:
-                      </label>
-                      <input
-                        type="text"
-                        value={teacherProfile.wilaya || 'الجزائر العاصمة'}
-                        onChange={e => setTeacherProfile(p => ({ ...p, wilaya: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-2xl border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200 space-y-1">
-                    <strong className="block font-black">حساب Google المرتبط:</strong>
-                    <span className="font-mono text-blue-600 dark:text-blue-400">{currentUser?.email}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* المجموعة 2: إعدادات المادة والمستوى */}
-              {settingsActiveTab === 'subject' && (
-                <div className="space-y-4 animate-fadeIn">
-                  <div>
-                    <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                      المادة التعليمية المسندة (المنهاج الجزائري):
-                    </label>
-                    <select
-                      value={teacherProfile.subject}
-                      onChange={e => setTeacherProfile(p => ({ ...p, subject: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
-                    <span className="font-black text-slate-800 dark:text-white block">خصائص الحصص التطبيقية (TP):</span>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={activeClass.hasTP}
-                        onChange={e => {
-                          const val = e.target.checked;
-                          setClasses(prev => prev.map(c => c.id === activeClass.id ? { ...c, hasTP: val } : c));
-                        }}
-                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-slate-700 dark:text-slate-300 font-bold">تفعيل حصص الأعمال التطبيقية / المخبرية (TP) لقسم {activeClass.name}</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* المجموعة 3: إدارة الأقسام والسنوات (سعة 10 أقسام) */}
-              {settingsActiveTab === 'classes' && (
-                <div className="space-y-3 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-700 dark:text-slate-300">
-                      الأقسام المسندة ({classes.length} من 10 أقسام):
-                    </span>
-                    {classes.length < 10 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowSettingsModal(false);
-                          setNewClassModal(true);
-                        }}
-                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>إضافة قسم جديد</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {classes.map(c => (
-                      <div
-                        key={c.id}
-                        className={`p-3 rounded-2xl border flex items-center justify-between gap-3 ${
-                          c.id === activeClass.id
-                            ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-400'
-                            : 'bg-white dark:bg-slate-850 border-slate-200 dark:border-slate-700'
-                        }`}
-                      >
-                        <div>
-                          <strong className="text-xs font-black text-slate-900 dark:text-white block">{c.name}</strong>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                            {c.level} • {c.stream} • {c.students.length} تلميذ
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          {c.id !== activeClass.id && (
-                            <button
-                              type="button"
-                              onClick={() => setActiveClassId(c.id)}
-                              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-blue-600 hover:text-white transition"
-                            >
-                              تعيين كنشط
-                            </button>
-                          )}
-                          {classes.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setClasses(prev => prev.filter(item => item.id !== c.id));
-                                if (activeClassId === c.id) {
-                                  const remaining = classes.filter(item => item.id !== c.id);
-                                  setActiveClassId(remaining[0].id);
-                                }
-                                showNotice(`تم حذف قسم ${c.name}`);
-                              }}
-                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
-                              title="حذف القسم"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* المجموعة 4: إعدادات العلامات والتقويم */}
-              {settingsActiveTab === 'grading' && (
-                <div className="space-y-3.5 animate-fadeIn">
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
-                    <strong className="text-xs font-black text-slate-900 dark:text-white block">معادلة حساب التقويم المستمر (CC):</strong>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      الأساس الافتراضي = <strong className="text-blue-600 dark:text-blue-400">14 / 20</strong> + رصيد السلوك والمواظبة والمشاركة الميدانية (بين 0 و 20).
-                    </p>
-                  </div>
-
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
-                    <strong className="text-xs font-black text-slate-900 dark:text-white block">معاملات حساب المعدل الفصلي للمادة:</strong>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                      المعدل = [معدل التقويم والفروض + (نقطة الاختبار × 2)] ÷ 3 وفق مناشير وزارة التربية الوطنية للطور الثانوي.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* المجموعة 5: تفضيلات العرض والتنبيهات */}
-              {settingsActiveTab === 'preferences' && (
-                <div className="space-y-3.5 animate-fadeIn">
-                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <strong className="text-xs font-black text-slate-900 dark:text-white block">المظهر الليلي (Dark Mode)</strong>
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400">التبديل بين السمة الداكنة والفاتحة</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDarkMode(!darkMode)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 font-bold text-xs"
-                    >
-                      {darkMode ? 'تفعيل النهاري' : 'تفعيل الليلي'}
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <strong className="text-xs font-black text-slate-900 dark:text-white block">إنذار الغيابات التلقائي</strong>
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400">إظهار شارة تنبيه عند وصول التلميذ إلى 3 غيابات</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-black">
-                      مفعل افتراضياً ✓
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                    <div>
-                      <strong className="text-xs font-black text-slate-900 dark:text-white block">الحفظ السحابي التلقائي</strong>
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400">مزامنة فورية لكل عملية تعديل مع خادم البيانات</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-black">
-                      نشط ومحمي ✓
-                    </span>
-                  </div>
-                </div>
-              )}
-
-            </div>
-
-            {/* فوتر نافذة الإعدادات */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-between gap-3 shrink-0">
-              <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">
-                ✓ التعديلات تُحفظ سحابياً ومحلياً فوراً
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSettingsModal(false);
-                  showNotice('✓ تم حفظ وتطبيق كافة الإعدادات بنجاح');
-                }}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-md transition cursor-pointer min-h-[40px]"
-              >
-                إغلاق وحفظ
-              </button>
-            </div>
-          </div>
-        </div>
+            showNotice('تم حفظ إعدادات الأستاذ والأقسام بنجاح في قاعدة البيانات!');
+            return ok;
+          }}
+          onClose={() => setShowSettingsModal(false)}
+        />
       )}
 
       {/* نافذة إضافة قسم جديد */}

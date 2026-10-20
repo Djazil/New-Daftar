@@ -14,6 +14,7 @@ import {
   fetchAdminAuditLogs, getDeletedEmails
 } from '../services/subscriptionService';
 import { subscribeToAllSubscriptionsInFirestore } from '../services/firebaseSubscriptionService';
+import BrandLogo from './BrandLogo';
 
 interface AdminSubscriptionManagerProps {
   currentUser: AuthUser;
@@ -227,13 +228,11 @@ export default function AdminSubscriptionManager({
         
         {/* هيدر لوحة التحكم */}
         <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-bold shadow-inner">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-black text-white">لوحة تحكم إدارة حسابات واشتراكات الأساتذة</h2>
-              <p className="text-xs text-slate-400 font-mono">حساب المشرف الرئيسي: {ADMIN_EMAIL}</p>
+          <div className="flex items-center gap-3 min-w-0">
+            <BrandLogo size="sm" showText={false} />
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-lg font-black text-white truncate">لوحة تحكم إدارة حسابات واشتراكات الأساتذة</h2>
+              <p className="text-xs text-slate-400 font-mono truncate">الدفتر اليومي الذكي للأستاذ • المشرف: {ADMIN_EMAIL}</p>
             </div>
           </div>
 

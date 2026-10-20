@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "الدفتر اليومي الذكي للأستاذ",
+  "short_name": "الدفتر الذكي",
+  "description": "منصة رقمية بيداغوجية متكاملة لأساتذة التعليم الثانوي الجزائري: إدارة الحصص، المسح الضوئي للقوائم OCR، مخطط الجلوس، رصد النقاط وبوابة الأولياء.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "ar",
+  "theme_color": "#0f172a",
+  "background_color": "#020617",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

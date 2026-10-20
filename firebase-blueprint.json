@@ -1,5 +1,21 @@
 {
   "entities": {
+    "UserProfile": {
+      "title": "User Profile & Account Status",
+      "description": "Represents an authenticated teacher or admin user account and activation status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["teacher", "admin"] },
+        "status": { "type": "string", "enum": ["pending", "active", "suspended", "deleted"] },
+        "isFirstTimeSetupDone": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
     "Subscription": {
       "title": "Teacher Subscription",
       "description": "Represents a teacher account record and activation status",
@@ -20,17 +36,6 @@
       },
       "required": ["teacherEmail", "status"]
     },
-    "DeletedSubscription": {
-      "title": "Deleted Subscription Record",
-      "description": "Blacklist record for deleted teacher accounts preventing auto re-creation",
-      "type": "object",
-      "properties": {
-        "teacherEmail": { "type": "string" },
-        "deletedAt": { "type": "string" },
-        "deletedBy": { "type": "string" }
-      },
-      "required": ["teacherEmail"]
-    },
     "AdminAuditLog": {
       "title": "Admin Audit Log",
       "description": "Audit record for administrative operations (activation, suspension, cancellation, deletion)",
@@ -48,13 +53,13 @@
     }
   },
   "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Collection of user profiles and activation statuses"
+    },
     "/subscriptions/{teacherEmailKey}": {
       "schema": "Subscription",
       "description": "Collection storing teacher subscription records indexed by encoded teacher email"
-    },
-    "/deleted_subscriptions/{teacherEmailKey}": {
-      "schema": "DeletedSubscription",
-      "description": "Legacy deletion collection - no longer used to block logins"
     },
     "/admin_audit_logs/{logId}": {
       "schema": "AdminAuditLog",

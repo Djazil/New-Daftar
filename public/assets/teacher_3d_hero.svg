@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradients -->
+    <radialGradient id="bgGlow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.35"/>
+      <stop offset="50%" stop-color="#6366F1" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0"/>
+    </radialGradient>
+    
+    <linearGradient id="apple3dGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="50%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#34D399"/>
+    </linearGradient>
+
+    <linearGradient id="glassCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0.03"/>
+    </linearGradient>
+
+    <linearGradient id="laptopGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+
+    <linearGradient id="screenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#020617"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+
+    <!-- Glass Glow Filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="shadow3d" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Ambient Glow Background -->
+  <rect width="800" height="600" fill="#090D16" rx="24"/>
+  <circle cx="400" cy="250" r="300" fill="url(#bgGlow)" />
+  
+  <!-- 3D Grid Floor Effect -->
+  <g opacity="0.15" stroke="#60A5FA" stroke-width="1">
+    <ellipse cx="400" cy="480" rx="350" ry="80" fill="none" stroke-width="1.5" opacity="0.4"/>
+    <ellipse cx="400" cy="480" rx="280" ry="60" fill="none" opacity="0.3"/>
+    <ellipse cx="400" cy="480" rx="200" ry="40" fill="none" opacity="0.2"/>
+    <line x1="100" y1="480" x2="700" y2="480"/>
+    <line x1="200" y1="420" x2="600" y2="540"/>
+    <line x1="600" y1="420" x2="200" y2="540"/>
+  </g>
+
+  <!-- 3D Desk Surface -->
+  <g filter="url(#shadow3d)">
+    <path d="M 120 440 L 680 440 L 740 520 L 60 520 Z" fill="url(#glassCardGrad)" stroke="white" stroke-opacity="0.2" stroke-width="1.5"/>
+    <!-- Desk Reflection glow -->
+    <path d="M 220 450 L 580 450 L 620 500 L 180 500 Z" fill="#3B82F6" opacity="0.05"/>
+  </g>
+
+  <!-- Central 3D Laptop with Teacher Interface -->
+  <g filter="url(#shadow3d)">
+    <!-- Laptop Display Lid Backing -->
+    <rect x="220" y="140" width="360" height="240" rx="16" fill="url(#laptopGrad)" stroke="#38BDF8" stroke-opacity="0.4" stroke-width="2"/>
+    
+    <!-- Laptop Screen Screen Content -->
+    <rect x="230" y="150" width="340" height="220" rx="10" fill="url(#screenGrad)"/>
+
+    <!-- Screen UI Header -->
+    <rect x="230" y="150" width="340" height="32" rx="10" fill="#1E293B"/>
+    <circle cx="248" cy="166" r="4" fill="#EF4444"/>
+    <circle cx="260" cy="166" r="4" fill="#F59E0B"/>
+    <circle cx="272" cy="166" r="4" fill="#10B981"/>
+    <text x="555" y="171" font-family="sans-serif" font-size="11" font-weight="bold" fill="#94A3B8" text-anchor="end">الدفتر اليومي الذكي - ثانوية الشهيد زيغود يوسف</text>
+
+    <!-- Screen Dashboard Mockup Content -->
+    <!-- Stats Cards on Screen -->
+    <rect x="242" y="192" width="95" height="50" rx="8" fill="#0F172A" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="328" y="210" font-family="sans-serif" font-size="9" fill="#94A3B8" text-anchor="end">نسبة الحضور</text>
+    <text x="328" y="230" font-family="sans-serif" font-size="15" font-weight="bold" fill="#10B981" text-anchor="end">97.8%</text>
+
+    <rect x="345" y="192" width="95" height="50" rx="8" fill="#0F172A" stroke="#6366F1" stroke-opacity="0.3"/>
+    <text x="431" y="210" font-family="sans-serif" font-size="9" fill="#94A3B8" text-anchor="end">معدل القسم</text>
+    <text x="431" y="230" font-family="sans-serif" font-size="15" font-weight="bold" fill="#60A5FA" text-anchor="end">15.40</text>
+
+    <rect x="448" y="192" width="110" height="50" rx="8" fill="#0F172A" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="548" y="210" font-family="sans-serif" font-size="9" fill="#94A3B8" text-anchor="end">حالة الحصة المباشرة</text>
+    <text x="548" y="230" font-family="sans-serif" font-size="12" font-weight="bold" fill="#34D399" text-anchor="end">● نشطة (32 دقيقة)</text>
+
+    <!-- Interactive Graph on Screen -->
+    <rect x="242" y="250" width="316" height="110" rx="8" fill="#0B0F19" stroke="white" stroke-opacity="0.08"/>
+    <!-- Graph Lines -->
+    <path d="M 255 330 Q 310 280, 360 310 T 470 270 T 545 285" fill="none" stroke="url(#apple3dGrad)" stroke-width="3.5" filter="url(#glow)"/>
+    <!-- Area under graph -->
+    <path d="M 255 330 Q 310 280, 360 310 T 470 270 T 545 285 L 545 345 L 255 345 Z" fill="url(#apple3dGrad)" opacity="0.15"/>
+    <circle cx="470" cy="270" r="5" fill="#60A5FA"/>
+    <circle cx="545" cy="285" r="5" fill="#34D399"/>
+
+    <!-- Laptop Base / Keyboard Base -->
+    <path d="M 180 380 L 620 380 L 650 440 L 150 440 Z" fill="#1E293B" stroke="#475569" stroke-width="1.5"/>
+    <!-- Trackpad -->
+    <rect x="350" y="415" width="100" height="20" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1"/>
+    <!-- Keyboard Glow -->
+    <path d="M 220 388 L 580 388 L 595 410 L 205 410 Z" fill="#334155" opacity="0.6"/>
+  </g>
+
+  <!-- 3D Teacher Avatar / Hologram Icon Floating above Laptop -->
+  <g filter="url(#shadow3d)" transform="translate(0, -10)">
+    <!-- Glowing Halo behind Teacher -->
+    <circle cx="400" cy="110" r="55" fill="url(#apple3dGrad)" opacity="0.25" filter="url(#glow)" />
+    <circle cx="400" cy="110" r="42" fill="#1E293B" stroke="url(#apple3dGrad)" stroke-width="3"/>
+    
+    <!-- 3D Stylized Teacher Figure Icon -->
+    <!-- Head -->
+    <circle cx="400" cy="98" r="16" fill="url(#apple3dGrad)"/>
+    <!-- Glasses -->
+    <rect x="388" y="94" width="10" height="7" rx="2" fill="none" stroke="#0F172A" stroke-width="2"/>
+    <rect x="402" y="94" width="10" height="7" rx="2" fill="none" stroke="#0F172A" stroke-width="2"/>
+    <line x1="398" y1="97" x2="402" y2="97" stroke="#0F172A" stroke-width="2"/>
+    <!-- Shoulders/Suit -->
+    <path d="M 372 135 C 372 120, 385 118, 400 118 C 415 118, 428 120, 428 135 Z" fill="url(#apple3dGrad)"/>
+    <!-- Tie -->
+    <polygon points="400,120 404,130 400,138 396,130" fill="#0F172A"/>
+  </g>
+
+  <!-- Floating Glass Card 1 (Right Side: 3D Graduation Cap & Books) -->
+  <g filter="url(#shadow3d)" transform="translate(560, 100)">
+    <rect x="0" y="0" width="180" height="120" rx="20" fill="url(#glassCardGrad)" stroke="white" stroke-opacity="0.25" stroke-width="1.5" backdrop-filter="blur(16px)"/>
+    <!-- Cap SVG -->
+    <path d="M 40 45 L 90 25 L 140 45 L 90 65 Z" fill="url(#apple3dGrad)"/>
+    <path d="M 60 55 L 60 75 C 60 85, 120 85, 120 75 L 120 55" fill="none" stroke="#60A5FA" stroke-width="3"/>
+    <text x="90" y="102" font-family="sans-serif" font-size="12" font-weight="bold" fill="#E2E8F0" text-anchor="middle">تنظيم الأقسام 100%</text>
+  </g>
+
+  <!-- Floating Glass Card 2 (Left Side: 3D Smart Reminder Badge) -->
+  <g filter="url(#shadow3d)" transform="translate(60, 260)">
+    <rect x="0" y="0" width="170" height="100" rx="20" fill="url(#glassCardGrad)" stroke="white" stroke-opacity="0.25" stroke-width="1.5"/>
+    <circle cx="35" cy="35" r="16" fill="#10B981" opacity="0.2"/>
+    <circle cx="35" cy="35" r="8" fill="#34D399"/>
+    <text x="60" y="32" font-family="sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF">تنبيه ذكي تلقائي</text>
+    <text x="60" y="48" font-family="sans-serif" font-size="9" fill="#94A3B8">30 دقيقة بدون نسيان</text>
+    <rect x="15" y="68" width="140" height="16" rx="8" fill="#1E293B" stroke="#34D399" stroke-opacity="0.4"/>
+    <text x="85" y="80" font-family="sans-serif" font-size="9" font-weight="bold" fill="#34D399" text-anchor="middle">تم تسجيل الحضور ✓</text>
+  </g>
+
+  <!-- Floating Orbs for Apple 3D depth -->
+  <circle cx="160" cy="140" r="14" fill="#60A5FA" filter="url(#glow)" opacity="0.8"/>
+  <circle cx="680" cy="360" r="18" fill="#34D399" filter="url(#glow)" opacity="0.7"/>
+  <circle cx="620" cy="480" r="10" fill="#818CF8" filter="url(#glow)" opacity="0.9"/>
+</svg>

@@ -7,7 +7,9 @@ import {
   removeDeletedSubscriptionFromFirestore,
   subscribeToAllSubscriptionsInFirestore,
   saveAdminAuditLogInFirestore,
-  fetchAdminAuditLogsFromFirestore
+  fetchAdminAuditLogsFromFirestore,
+  saveTeacherWorkspaceToFirestore,
+  loadTeacherWorkspaceFromFirestore
 } from './firebaseSubscriptionService';
 
 export const ADMIN_EMAIL = 'djazild@gmail.com';
@@ -19,11 +21,11 @@ export const SUBSCRIPTION_TIERS: SubscriptionTier[] = [
     durationLabel: 'تفعيل دائم غير محدود مدى الحياة',
     durationMonths: null,
     durationDays: null,
-    priceDZD: 5000,
+    priceDZD: 1000,
     popular: true,
     features: [
       'تفعيل غير قابل للانتهاء أبداً',
-      'دفع لمرة واحدة واستخدام دائم لسنوات',
+      'دفع 1000 دج لمرة واحدة واستخدام دائم لسنوات',
       'جميع التحديثات والميزات المستقبلية مجاناً',
       'حفظ سحابي دائم ومضمون بدون انقطاع',
       'شارة الأستاذ الذهبي المتميز في المنصة'
@@ -43,7 +45,7 @@ export const BARIDIMOB_CONFIG = {
   whatsappNumber: WHATSAPP_CONTACT_NUMBER,
   instructions: [
     'افتح تطبيق بريدي موب (BaridiMob) في هاتفك أو توجه لأقرب مكتب بريد.',
-    'قم بتحويل المبلغ عبر رقم الحساب البريدي الموحد RIP: 00799999002093331792',
+    'قم بتحويل المبلغ (1000 دج) عبر رقم الحساب البريدي الموحد RIP: 00799999002093331792',
     'احتفظ بصورة وصل الدفع أو لقطة شاشة من تطبيق بريدي موب.',
     'سجل دخولك بحساب Google وسيظهر حسابك فوراً لدى إدارة المنصة بانتظار التفعيل.'
   ]
@@ -67,7 +69,7 @@ export function createWhatsAppActivationLink(data: {
   const cleanNotes = data.notes?.trim() || '';
 
   const messageLines = [
-    'طلب تفعيل اشتراك في «الدفتر اليومي الذكي للأستاذ»:',
+    'طلب تفعيل اشتراك في «الدفتر اليومي الذكي للأستاذ» (1000 دج لمرة واحدة):',
     `- البريد الإلكتروني (Gmail): ${cleanEmail}`,
     `- الاسم واللقب: ${cleanName}`,
     cleanPhone ? `- رقم الهاتف: ${cleanPhone}` : '',
@@ -83,7 +85,7 @@ export function createWhatsAppActivationLink(data: {
  * رابط مباشر لفتح محادثة واتساب لإرسال وصل الدفع
  */
 export function createWhatsAppDirectReceiptLink(planName?: string, priceDZD?: number): string {
-  const fullMessage = `السلام عليكم ورحمة الله،\nأود إرسال وصل الدفع عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ».\nسأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
+  const fullMessage = `السلام عليكم ورحمة الله،\nأود إرسال وصل الدفع (1000 دج) عبر بريدي موب لتفعيل اشتراكي في «الدفتر الذكي للأستاذ».\nسأقوم بإرفاق صورة الوصل هنا حتى يتمكن المدير من مراجعة الدفع وتفعيل الحساب.`;
 
   return `https://wa.me/${WHATSAPP_INTL_NUMBER}?text=${encodeURIComponent(fullMessage)}`;
 }
@@ -109,7 +111,7 @@ export function removeDeletedEmail(_email: string): void {
   } catch {}
 }
 
-// تهيئة التخزين الأولي مع تفعيل دائم لحساب المدير المشرف العام فقط
+// تهيئة التخزين الأولي مع تفعيل دائم لحساب المشرف العام والحسابات المعتمدة
 function getInitialSubscriptions(): Record<string, TeacherSubscription> {
   const adminSub: TeacherSubscription = {
     teacherEmail: ADMIN_EMAIL,
@@ -124,8 +126,36 @@ function getInitialSubscriptions(): Record<string, TeacherSubscription> {
     adminNotes: 'حساب المشرف العام والمدير الرئيسي - صلاحيات كاملة وتفعيل دائم مجاني'
   };
 
+  const sub2: TeacherSubscription = {
+    teacherEmail: 'hdjazil95@gmail.com',
+    teacherName: 'أ. hdjazil95',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: new Date('2024-01-01').toISOString(),
+    activatedByAdminEmail: ADMIN_EMAIL,
+    adminNotes: 'حساب مفعل مدى الحياة'
+  };
+
+  const sub3: TeacherSubscription = {
+    teacherEmail: 'droidy.dz@gmail.com',
+    teacherName: 'أ. droidy.dz',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: new Date('2024-01-01').toISOString(),
+    activatedByAdminEmail: ADMIN_EMAIL,
+    adminNotes: 'حساب مفعل مدى الحياة'
+  };
+
   return {
-    [ADMIN_EMAIL]: adminSub
+    [ADMIN_EMAIL]: adminSub,
+    'hdjazil95@gmail.com': sub2,
+    'droidy.dz@gmail.com': sub3
   };
 }
 
@@ -585,20 +615,40 @@ export async function activateTeacherSubscription(
   };
 }
 
-export async function syncTeacherDataToServer(email: string, data: any): Promise<boolean> {
-  try {
-    const res = await fetch('/api/teacher/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ teacherEmail: email, data })
-    });
-    return res.ok;
-  } catch {
-    return false;
+export async function syncTeacherDataToServer(email: string, data: any, retries = 3, delayMs = 1200): Promise<boolean> {
+  // Persist workspace (including seating chart positions) directly to Firestore
+  const firestorePromise = saveTeacherWorkspaceToFirestore(email, data).catch(() => false);
+
+  let serverOk = false;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch('/api/teacher/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacherEmail: email, data })
+      });
+      if (res.ok) {
+        serverOk = true;
+        break;
+      }
+    } catch {
+      // network or fetch error, will retry
+    }
+    if (attempt < retries) {
+      await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+    }
   }
+  const firestoreOk = await firestorePromise;
+  return serverOk || firestoreOk;
 }
 
 export async function loadTeacherDataFromServer(email: string): Promise<any | null> {
+  try {
+    const firestoreData = await loadTeacherWorkspaceFromFirestore(email);
+    if (firestoreData && firestoreData.teacherProfile) {
+      return firestoreData;
+    }
+  } catch {}
   try {
     const res = await fetch(`/api/teacher/load/${encodeURIComponent(email)}`);
     if (res.ok) {

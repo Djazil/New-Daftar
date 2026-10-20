@@ -13,11 +13,36 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SUBSCRIPTIONS_FILE = path.join(DATA_DIR, 'subscriptions.json');
 const DELETED_FILE = path.join(DATA_DIR, 'deleted_subscriptions.json');
 const AUDIT_LOGS_FILE = path.join(DATA_DIR, 'admin_audit_logs.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
+
+function getSessionsData(): any[] {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) return [];
+    const raw = fs.readFileSync(SESSIONS_FILE, 'utf-8');
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessionsData(list: any[]): boolean {
+  try {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Error saving sessions file:', err);
+    return false;
+  }
+}
+
+// Parent lookup rate limit store: IP -> { failedAttempts: number, lastAttemptAt: number, lockedUntil: number | null }
+const PARENT_RATE_LIMITS = new Map<string, { failedAttempts: number; lastAttemptAt: number; lockedUntil: number | null }>();
 
 // Automatically ensure no Gmail accounts are blocked or blacklisted
 if (fs.existsSync(DELETED_FILE)) {
@@ -92,6 +117,30 @@ const DEFAULT_SUBSCRIPTIONS = {
     expiresAt: null,
     activatedAt: '2024-01-01T00:00:00.000Z',
     adminNotes: 'حساب المشرف العام والمدير الرئيسي'
+  },
+  'hdjazil95@gmail.com': {
+    teacherEmail: 'hdjazil95@gmail.com',
+    teacherName: 'أ. hdjazil95',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: '2024-01-01T00:00:00.000Z',
+    activatedByAdminEmail: 'djazild@gmail.com',
+    adminNotes: 'حساب مفعل مدى الحياة وغير محظور'
+  },
+  'droidy.dz@gmail.com': {
+    teacherEmail: 'droidy.dz@gmail.com',
+    teacherName: 'أ. droidy.dz',
+    planId: 'lifetime',
+    status: 'active',
+    amountDZD: 0,
+    isLifetime: true,
+    expiresAt: null,
+    activatedAt: '2024-01-01T00:00:00.000Z',
+    activatedByAdminEmail: 'djazild@gmail.com',
+    adminNotes: 'حساب مفعل مدى الحياة وغير محظور'
   }
 };
 
@@ -479,7 +528,21 @@ async function startServer() {
     if (!teacherEmail || !data) {
       return res.status(400).json({ success: false, message: 'البريد وبيانات الأستاذ مطلوبة' });
     }
-    const cleanKey = teacherEmail.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const emailClean = teacherEmail.trim().toLowerCase();
+
+    // التحقق الصارم من حالة الحساب من السيرفر قبل معالجة بيانات الأستاذ
+    const subs = getSubscriptionsData();
+    const sub = subs[emailClean];
+    const isAuthorized = isServerAdmin(emailClean) || (sub && sub.status === 'active');
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح بمزامنة بيانات الأستاذ. الحساب غير مفعّل بانتظار موافقة الإدارة.'
+      });
+    }
+
+    const cleanKey = emailClean.replace(/[^a-z0-9]/g, '_');
     const filePath = path.join(TEACHERS_DATA_DIR, `${cleanKey}.json`);
     try {
       fs.writeFileSync(filePath, JSON.stringify({ ...data, lastSyncedAt: new Date().toISOString() }, null, 2), 'utf-8');
@@ -495,7 +558,21 @@ async function startServer() {
     if (!email) {
       return res.status(400).json({ success: false, message: 'البريد مطلوب' });
     }
-    const cleanKey = email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const emailClean = email.trim().toLowerCase();
+
+    // التحقق الصارم من حالة الحساب من السيرفر قبل قراءة أو إرجاع أي بيانات أستاذ
+    const subs = getSubscriptionsData();
+    const sub = subs[emailClean];
+    const isAuthorized = isServerAdmin(emailClean) || (sub && sub.status === 'active');
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: 'غير مصرح بقراءة بيانات الأستاذ. الحساب غير مفعّل بانتظار موافقة الإدارة.'
+      });
+    }
+
+    const cleanKey = emailClean.replace(/[^a-z0-9]/g, '_');
     const filePath = path.join(TEACHERS_DATA_DIR, `${cleanKey}.json`);
     if (fs.existsSync(filePath)) {
       try {
@@ -506,6 +583,369 @@ async function startServer() {
       }
     }
     res.json({ success: true, data: null });
+  });
+
+  // ==========================================
+  // API Route: AI OCR Student List Extraction
+  // ==========================================
+  app.post('/api/ocr/extract-students', async (req, res) => {
+    try {
+      const { imageBase64, mimeType, textInput } = req.body;
+
+      if (!imageBase64 && !textInput) {
+        return res.status(400).json({ success: false, message: 'يرجى تقديم صورة أو نص القائمة' });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          message: 'مفتاح Gemini API غير مهيأ على السيرفر. يرجى استخدام طريقة الإدخال اليدوي أو اللصق.'
+        });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build'
+          }
+        }
+      });
+
+      const promptText = `
+أنت مساعد ذكي مخصص لاستخراج قوائم أسماء التلاميذ باللغتين العربية والفرنسية من مستندات وقوائم الأقسام المدرسية.
+اقرأ القائمة الموجودة في المستند/الصورة المرفقة واستخرج أسماء التلاميذ مرتبة.
+تجاهل العناوين مثل "قائمة التلاميذ"، "اللقب"، "الاسم"، "الرقم"، "الملاحظات"، "القسم"، "المؤسسة".
+قم بإنتاج مصفوفة JSON تحتوي على كائنات بها المفتاحين "firstName" و "lastName".
+مثال النتيجة المطلوبة:
+[
+  { "firstName": "أحمد", "lastName": "بن علي" },
+  { "firstName": "مريم", "lastName": "بن حمودة" }
+]
+يجب أن ترجع فقط مصفوفة JSON الصحيحة والخالصة دون أي نصوص إضافية أو علامات ماركداون.
+`;
+
+      let contentsPayload: any;
+      if (imageBase64) {
+        const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+        contentsPayload = {
+          parts: [
+            {
+              inlineData: {
+                data: cleanBase64,
+                mimeType: mimeType || 'image/png'
+              }
+            },
+            { text: promptText }
+          ]
+        };
+      } else {
+        contentsPayload = {
+          parts: [
+            { text: `${promptText}\nالنص المدخل:\n${textInput}` }
+          ]
+        };
+      }
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: contentsPayload,
+        config: {
+          responseMimeType: 'application/json'
+        }
+      });
+
+      const outputText = response.text || '';
+      let parsedStudents: Array<{ firstName: string; lastName: string }> = [];
+
+      try {
+        const cleanJson = outputText.trim().replace(/^```json/i, '').replace(/```$/i, '').trim();
+        const jsonResult = JSON.parse(cleanJson);
+        if (Array.isArray(jsonResult)) {
+          parsedStudents = jsonResult.map((st: any) => ({
+            firstName: String(st.firstName || st.first_name || st.name || 'تلميذ').trim(),
+            lastName: String(st.lastName || st.last_name || st.family_name || '').trim()
+          })).filter(st => st.firstName || st.lastName);
+        }
+      } catch (e) {
+        console.error('Failed to parse Gemini JSON output:', outputText);
+      }
+
+      if (parsedStudents.length === 0) {
+        return res.status(422).json({
+          success: false,
+          message: 'لم يتمكن النظام من التمييز الدقيق لأسماء التلاميذ في هذه الصورة. يرجى التأكد من وضوح الصورة أو استخدام الإدخال اليدوي.'
+        });
+      }
+
+      return res.json({
+        success: true,
+        students: parsedStudents,
+        count: parsedStudents.length
+      });
+
+    } catch (err: any) {
+      console.error('Error in OCR extraction API:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'حدث خطأ أثناء معالجة المستند بالذكاء الاصطناعي: ' + (err?.message || 'خطأ غير معروف')
+      });
+    }
+  });
+
+  // ==========================================
+  // API Route: فضاء ولي الأمر - البحث المترابط مع حماية المعدل والخصوصية
+  // ==========================================
+  app.post('/api/parent/lookup', (req, res) => {
+    const { parentCode } = req.body;
+    const clientIp = String(req.ip || req.socket.remoteAddress || 'unknown_ip');
+
+    if (!parentCode || typeof parentCode !== 'string') {
+      return res.status(400).json({ success: false, message: 'يرجى إدخال كود التلميذ الموحد' });
+    }
+
+    const cleanCode = parentCode.trim().toUpperCase().replace(/[^A-Z0-9\-_]/g, '').substring(0, 20);
+    if (!cleanCode) {
+      return res.status(400).json({ success: false, message: 'رمز غير صالح' });
+    }
+
+    const now = Date.now();
+    let record = PARENT_RATE_LIMITS.get(clientIp) || { failedAttempts: 0, lastAttemptAt: 0, lockedUntil: null };
+
+    // فحص حظر المحاولات الفاشلة الخادمي (60 ثانية بعد 5 محاولات متتالية)
+    if (record.lockedUntil && now < record.lockedUntil) {
+      const remainingSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+      return res.status(429).json({
+        success: false,
+        isLocked: true,
+        remainingSeconds,
+        message: `⚠️ تم حظر البحث مؤقتاً لحماية الحسابات. يرجى الانتظار ${remainingSeconds} ثانية قبل إعادة المحاولة.`
+      });
+    }
+
+    if (record.lockedUntil && now >= record.lockedUntil) {
+      record = { failedAttempts: 0, lastAttemptAt: now, lockedUntil: null };
+    }
+
+    if (now - record.lastAttemptAt > 3 * 60 * 1000) {
+      record.failedAttempts = 0;
+    }
+
+    // البحث في ملفات الأساتذة بالسيرفر
+    let foundStudent: any = null;
+    let foundClassInfo: any = null;
+    let foundSubject: string = 'مادة الأستاذ';
+
+    try {
+      if (fs.existsSync(TEACHERS_DATA_DIR)) {
+        const files = fs.readdirSync(TEACHERS_DATA_DIR);
+        for (const file of files) {
+          if (file.endsWith('.json')) {
+            try {
+              const raw = fs.readFileSync(path.join(TEACHERS_DATA_DIR, file), 'utf-8');
+              const teacherData = JSON.parse(raw);
+              if (teacherData && teacherData.classes && Array.isArray(teacherData.classes)) {
+                for (const cls of teacherData.classes) {
+                  if (cls.students && Array.isArray(cls.students)) {
+                    const st = cls.students.find((s: any) =>
+                      s.parentCode && s.parentCode.trim().toUpperCase() === cleanCode
+                    );
+                    if (st) {
+                      foundStudent = st;
+                      foundClassInfo = {
+                        name: cls.name,
+                        level: cls.level,
+                        stream: cls.stream,
+                        hasTP: cls.hasTP
+                      };
+                      foundSubject = teacherData.profile?.subject || 'مادة التخصص';
+                      break;
+                    }
+                  }
+                }
+              }
+            } catch {}
+          }
+          if (foundStudent) break;
+        }
+      }
+    } catch (err) {
+      console.warn('Error reading teachers data dir for parent lookup:', err);
+    }
+
+    if (!foundStudent) {
+      record.failedAttempts += 1;
+      record.lastAttemptAt = now;
+      if (record.failedAttempts >= 5) {
+        record.lockedUntil = now + 60 * 1000;
+        PARENT_RATE_LIMITS.set(clientIp, record);
+        return res.status(429).json({
+          success: false,
+          isLocked: true,
+          remainingSeconds: 60,
+          message: '⚠️ تجاوزت الحد المسموح به من المحاولات الخاطئة (5 محاولات). تم الحظر مؤقتاً لمدة 60 ثانية.'
+        });
+      }
+      PARENT_RATE_LIMITS.set(clientIp, record);
+      return res.status(404).json({
+        success: false,
+        message: `لم يتم العثور على تلميذ بهذا الكود الموحد (${cleanCode}). يرجى التأكد من الكود المسلم من الأستاذ.`
+      });
+    }
+
+    // النجاح: صفر المحاولات الخاطئة
+    PARENT_RATE_LIMITS.set(clientIp, { failedAttempts: 0, lastAttemptAt: now, lockedUntil: null });
+
+    // تنقية وتصفية البيانات المسموح بمشاركتها فقط لحماية الخصوصية
+    const safePayload = {
+      id: foundStudent.id,
+      firstName: foundStudent.firstName,
+      lastName: foundStudent.lastName,
+      parentCode: foundStudent.parentCode,
+      subjectName: foundSubject,
+      className: foundClassInfo.name,
+      level: foundClassInfo.level,
+      stream: foundClassInfo.stream,
+      attendance: {
+        current: foundStudent.attendance || 'present',
+        absencesCount: foundStudent.absencesCount || 0,
+        lateCount: foundStudent.attendance === 'late' ? 1 : 0
+      },
+      marks: {
+        tpScore: foundStudent.tpScore,
+        test1: foundStudent.test1,
+        test2: foundStudent.test2,
+        exam: foundStudent.exam,
+        bonusPoints: foundStudent.bonusPoints,
+        remark: foundStudent.remark || ''
+      },
+      behaviorLedger: {
+        balance: foundStudent.bonusPoints || 0,
+        transactions: (foundStudent.logs || []).map((l: any) => ({
+          id: l.id,
+          date: l.date,
+          type: l.type,
+          reason: l.reason,
+          delta: l.delta
+        }))
+      },
+      parentNotes: foundStudent.parentNotes || '',
+      parentRecommendations: foundStudent.parentRecommendations || '',
+      strengths: foundStudent.strengths || '',
+      areasForImprovement: foundStudent.areasForImprovement || ''
+    };
+
+    return res.json({ success: true, student: safePayload });
+  });
+
+  // ==========================================
+  // API Routes: إدارة الحصص المباشرة والحد من التداخل
+  // ==========================================
+
+  // 1. جلب الحصة النشطة للأستاذ
+  app.get('/api/sessions/active/:email', (req, res) => {
+    const email = req.params.email;
+    if (!email) return res.status(400).json({ success: false, message: 'البريد مطلوب' });
+    const cleanEmail = email.trim().toLowerCase();
+    const list = getSessionsData();
+    const activeSession = list.find((s: any) => s.teacherEmail.toLowerCase() === cleanEmail && s.status === 'active');
+    return res.json({ success: true, activeSession: activeSession || null });
+  });
+
+  // 2. إنشاء حصة جديدة مع الفحص الصارم لعدم تداخل الحصص النشطة
+  app.post('/api/sessions/create', (req, res) => {
+    const session = req.body;
+    if (!session || !session.teacherEmail) {
+      return res.status(400).json({ success: false, message: 'بيانات الحصة غير مكتملة' });
+    }
+
+    const cleanEmail = session.teacherEmail.trim().toLowerCase();
+    const list = getSessionsData();
+
+    // التحقق من الحصص النشطة: يمنع وجود أكثر من حصة نشطة لنفس الأستاذ
+    const activeConflict = list.find((s: any) => s.teacherEmail.toLowerCase() === cleanEmail && s.status === 'active' && s.id !== session.id);
+    if (activeConflict) {
+      return res.status(409).json({
+        success: false,
+        hasActiveSession: true,
+        activeSession: activeConflict,
+        message: `توجد حصة نشطة بالفعل لقسم «${activeConflict.className}» موضوعها: (${activeConflict.topic || 'بدون عنوان'}). لا يمكنك تشغيل حصة ثانية حتى تنهي الحصة الحالية.`
+      });
+    }
+
+    list.unshift(session);
+    saveSessionsData(list);
+    return res.json({ success: true, message: 'تم بدء الحصة المباشرة بنجاح', session });
+  });
+
+  // 3. التحديث الحثيث الحي للحصة أثناء العمل
+  app.post('/api/sessions/update-live', (req, res) => {
+    const session = req.body;
+    if (!session || !session.id) {
+      return res.status(400).json({ success: false, message: 'معرف الحصة مطلوب' });
+    }
+
+    const list = getSessionsData();
+    const idx = list.findIndex((s: any) => s.id === session.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...session, lastSyncedAt: new Date().toISOString() };
+    } else {
+      list.unshift(session);
+    }
+    saveSessionsData(list);
+    return res.json({ success: true, message: 'تم تحديث الحصة حياً' });
+  });
+
+  // 4. الاعتماد النهائي الذري لإنهاء الحصة
+  app.post('/api/sessions/complete', (req, res) => {
+    const { session, updatedStudents } = req.body;
+    if (!session || !session.id) {
+      return res.status(400).json({ success: false, message: 'بيانات الحصة مطلوبة' });
+    }
+
+    const cleanEmail = session.teacherEmail.trim().toLowerCase();
+    const list = getSessionsData();
+
+    const idx = list.findIndex((s: any) => s.id === session.id);
+    const completedSession = {
+      ...session,
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+      lastSyncedAt: new Date().toISOString()
+    };
+
+    if (idx >= 0) {
+      list[idx] = completedSession;
+    } else {
+      list.unshift(completedSession);
+    }
+    saveSessionsData(list);
+
+    // تحديث ملف الأستاذ والتلاميذ
+    if (updatedStudents && Array.isArray(updatedStudents)) {
+      const cleanKey = cleanEmail.replace(/[^a-z0-9]/g, '_');
+      const filePath = path.join(TEACHERS_DATA_DIR, `${cleanKey}.json`);
+      if (fs.existsSync(filePath)) {
+        try {
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const teacherData = JSON.parse(raw);
+          if (teacherData && teacherData.classes) {
+            teacherData.classes = teacherData.classes.map((cls: any) => {
+              if (cls.id === session.classId) {
+                return { ...cls, students: updatedStudents };
+              }
+              return cls;
+            });
+            fs.writeFileSync(filePath, JSON.stringify(teacherData, null, 2), 'utf-8');
+          }
+        } catch (e) {
+          console.warn('Error updating teacher file on session completion:', e);
+        }
+      }
+    }
+
+    return res.json({ success: true, message: 'تم إنهاء الحصة وتوثيق كامل بياناتها بنجاح', session: completedSession });
   });
 
   // API Route: Extend subscription
@@ -659,17 +1099,7 @@ async function startServer() {
       const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
       const resolvedMime = mimeType && mimeType.includes('/') ? mimeType : 'image/jpeg';
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: resolvedMime
-            }
-          },
-          {
-            text: `أنت خبير قراءة واستخراج الوثائق المدرسية الرسمية لوزارة التربية الوطنية الجزائرية (قوائم تلاميذ الأقسام، كشوف النقاط، محاضر التنقيط).
+      const ocrPrompt = `أنت خبير قراءة واستخراج الوثائق المدرسية الرسمية لوزارة التربية الوطنية الجزائرية (قوائم تلاميذ الأقسام، كشوف النقاط، محاضر التنقيط).
 المطلوب منك: قراءة الصورة المرفوعة واستخراج جميع أسماء وتلاميذ القائمة كما هي مكتوبة في الورقة تماماً وبكل أمانة ودقة.
 
 قواعد صارمة جداً لا تحتمل أي خطأ:
@@ -677,30 +1107,63 @@ async function startServer() {
 2. ممنوع منعاً باتاً توليد أو تأليف أو تخمين أي اسم وهمي من عندك.
 3. إذا كانت القائمة تحتوي على 5 أو 30 أو 60 أو 100 تلميذ، استخرج كل تلميذ بالترتيب الرقمي للقائمة.
 4. افصل اللقب (Nom/lastName) عن الاسم (Prénom/firstName). في الوثائق الجزائرية يكون اللقب أولاً ثم الاسم. إذا كان الاسم مركباً مثل "محمد الأمين" أو "فاطمة الزهراء"، اجعل اللقب في lastName والاسم كاملاً في firstName.
-5. إذا كانت الصورة رديئة تماماً أو بيضاء أو لا تحتوي على قائمة تلاميذ، أعد مصفوفة فارغة [] ولا تخترع شيئاً.`
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                lastName: {
-                  type: Type.STRING,
-                  description: 'لقب التلميذ كما هو مكتوب في الوثيقة'
-                },
-                firstName: {
-                  type: Type.STRING,
-                  description: 'اسم التلميذ كما هو مكتوب في الوثيقة'
+5. إذا كانت الصورة رديئة تماماً أو بيضاء أو لا تحتوي على قائمة تلاميذ، أعد مصفوفة فارغة [] ولا تخترع شيئاً.`;
+
+      // Fallback model chain to gracefully handle 503 UNAVAILABLE / high demand spikes
+      const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+      let response: any = null;
+      let lastError: any = null;
+
+      for (let i = 0; i < candidateModels.length; i++) {
+        const modelName = candidateModels[i];
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                inlineData: {
+                  data: cleanBase64,
+                  mimeType: resolvedMime
                 }
               },
-              required: ['lastName', 'firstName']
+              {
+                text: ocrPrompt
+              }
+            ],
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    lastName: {
+                      type: Type.STRING,
+                      description: 'لقب التلميذ كما هو مكتوب في الوثيقة'
+                    },
+                    firstName: {
+                      type: Type.STRING,
+                      description: 'اسم التلميذ كما هو مكتوب في الوثيقة'
+                    }
+                  },
+                  required: ['lastName', 'firstName']
+                }
+              }
             }
+          });
+          if (response) break;
+        } catch (modelErr: any) {
+          lastError = modelErr;
+          console.warn(`[OCR] Model ${modelName} attempt failed (${modelErr?.status || modelErr?.code || 'ERR'}), trying next fallback...`);
+          if (i < candidateModels.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 900 * (i + 1)));
           }
         }
-      });
+      }
+
+      if (!response) {
+        throw lastError || new Error('خدمة القراءة الضوئية تواجه ضغطاً مؤقتاً، يرجى المحاولة بعد لحظات.');
+      }
 
       const text = response.text || '[]';
       let parsedStudents: any[] = [];
@@ -739,9 +1202,13 @@ async function startServer() {
       res.json({ success: true, students: validStudents });
     } catch (err: any) {
       console.error('OCR Extraction Error:', err);
-      res.status(500).json({
+      const rawMsg = String(err?.message || '');
+      const isOverloaded = rawMsg.includes('503') || rawMsg.includes('UNAVAILABLE') || rawMsg.includes('high demand') || rawMsg.includes('429');
+      res.status(503).json({
         success: false,
-        message: `تعذر استخراج الأسماء من الصورة: ${err.message || 'خطأ في معالجة الذكاء الاصطناعي'}. يرجى التأكد من وضوح الورقة والمحاولة مجدداً.`
+        message: isOverloaded
+          ? 'خادم القراءة الذكية يشهد ضغطاً مؤقتاً حالياً. يرجى الضغط على "إعادة المحاولة" بعد ثوانٍ قليلة.'
+          : 'تعذر استخراج الأسماء من الصورة. يرجى التأكد من وضوح وإضاءة ورقة القائمة والمحاولة مجدداً.'
       });
     }
   });

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="100%" height="100%">
+  <defs>
+    <radialGradient id="happyGlow" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#3B82F6" stop-opacity="0.38" />
+      <stop offset="50%" stop-color="#10B981" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#020617" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="bgSurface" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B1120" />
+      <stop offset="50%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#090D16" />
+    </linearGradient>
+    <linearGradient id="suitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E3A8A" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+    <linearGradient id="skinGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+    <linearGradient id="tabletScreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="50%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="cardGlass" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B" stop-opacity="0.92" />
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0.88" />
+    </linearGradient>
+    <filter id="dropShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="540" rx="28" fill="url(#bgSurface)" />
+  <circle cx="400" cy="260" r="320" fill="url(#happyGlow)" />
+
+  <!-- Subtle Classroom Window & Chalkboard Silhouette -->
+  <rect x="65" y="55" width="310" height="190" rx="16" fill="#0F172A" stroke="#334155" stroke-width="2" opacity="0.65" />
+  <text x="220" y="105" font-family="sans-serif" font-size="15" font-weight="bold" fill="#38BDF8" opacity="0.55" text-anchor="middle">f(x) = x² + 2x • E = mc²</text>
+  <path d="M 105 175 Q 160 120, 215 165 T 330 140" fill="none" stroke="#34D399" stroke-width="2.5" opacity="0.45" />
+
+  <!-- Warm Sunlight Rays -->
+  <circle cx="670" cy="95" r="46" fill="#FBBF24" opacity="0.22" />
+  <circle cx="670" cy="95" r="24" fill="#FDE047" opacity="0.4" />
+
+  <!-- Happy Teacher Character -->
+  <g filter="url(#dropShadow)" transform="translate(230, 85)">
+    <!-- Shoulders & Suit Jacket -->
+    <path d="M 65 375 C 65 255, 115 230, 175 230 C 235 230, 285 255, 285 375 Z" fill="url(#suitGrad)" stroke="#3B82F6" stroke-width="2" stroke-opacity="0.5" />
+    <!-- White Shirt & Tie -->
+    <polygon points="150,232 200,232 175,315" fill="#F8FAFC" />
+    <polygon points="169,242 181,242 185,302 175,316 165,302" fill="#EF4444" />
+    <!-- Lapels -->
+    <polygon points="150,232 125,270 162,305" fill="#1E293B" />
+    <polygon points="200,232 225,270 188,305" fill="#1E293B" />
+
+    <!-- Neck -->
+    <rect x="157" y="198" width="36" height="42" rx="14" fill="#F59E0B" />
+
+    <!-- Head -->
+    <ellipse cx="175" cy="140" rx="58" ry="66" fill="url(#skinGrad)" />
+
+    <!-- Hair & Beard (Neat & Friendly) -->
+    <path d="M 117 132 C 115 78, 145 58, 175 58 C 208 58, 235 78, 233 132 C 226 105, 205 88, 175 88 C 145 88, 124 105, 117 132 Z" fill="#1E293B" />
+    <path d="M 127 162 C 134 198, 155 208, 175 208 C 195 208, 216 198, 223 162 C 216 178, 198 192, 175 192 C 152 192, 134 178, 127 162 Z" fill="#1E293B" opacity="0.88" />
+
+    <!-- Modern Glasses -->
+    <rect x="134" y="120" width="34" height="24" rx="8" fill="#0F172A" fill-opacity="0.15" stroke="#0F172A" stroke-width="3.5" />
+    <rect x="182" y="120" width="34" height="24" rx="8" fill="#0F172A" fill-opacity="0.15" stroke="#0F172A" stroke-width="3.5" />
+    <line x1="168" y1="131" x2="182" y2="131" stroke="#0F172A" stroke-width="3.5" />
+
+    <!-- Happy Smiling Eyes -->
+    <path d="M 144 132 Q 151 124, 158 132" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
+    <path d="M 192 132 Q 199 124, 206 132" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Big Joyful Smile -->
+    <path d="M 150 163 Q 175 186, 200 163 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="2.5" />
+    <path d="M 162 174 Q 175 181, 188 174" fill="none" stroke="#EF4444" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Teacher Holding Glowing Smart Notebook Tablet -->
+    <g transform="translate(185, 200) rotate(-6)">
+      <rect x="0" y="0" width="160" height="118" rx="16" fill="#0F172A" stroke="#60A5FA" stroke-width="3" />
+      <rect x="8" y="8" width="144" height="102" rx="10" fill="url(#tabletScreen)" />
+      <circle cx="32" cy="32" r="12" fill="#FFFFFF" fill-opacity="0.2" />
+      <path d="M 27 32 L 31 36 L 38 28" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" />
+      <text x="138" y="34" font-family="sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="end">الدفتر الذكي </text>
+      <rect x="18" y="52" width="124" height="14" rx="6" fill="#FFFFFF" fill-opacity="0.22" />
+      <rect x="18" y="72" width="96" height="14" rx="6" fill="#34D399" fill-opacity="0.45" />
+      <text x="136" y="99" font-family="sans-serif" font-size="9" font-weight="bold" fill="#A7F3D0" text-anchor="end">✓ تم حفظ النقاط والحضور</text>
+    </g>
+
+    <!-- Happy Thumbs-Up / Wave Hand on Left -->
+    <g transform="translate(42, 235)">
+      <circle cx="32" cy="40" r="22" fill="url(#skinGrad)" stroke="#D97706" stroke-width="2" />
+      <rect x="26" y="8" width="13" height="24" rx="6.5" fill="url(#skinGrad)" stroke="#D97706" stroke-width="2" />
+    </g>
+  </g>
+
+  <!-- Floating UI Card 1: Top Right -->
+  <g filter="url(#dropShadow)" transform="translate(535, 115)">
+    <rect x="0" y="0" width="215" height="94" rx="20" fill="url(#cardGlass)" stroke="#34D399" stroke-opacity="0.5" stroke-width="1.5" />
+    <circle cx="34" cy="34" r="16" fill="#10B981" fill-opacity="0.2" />
+    <path d="M 28 34 L 32 39 L 41 29" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" />
+    <text x="195" y="33" font-family="sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF" text-anchor="end">راحة وسرعة للأستاذ</text>
+    <text x="195" y="52" font-family="sans-serif" font-size="10" fill="#94A3B8" text-anchor="end">رصد الحضور والنقاط في 30 ثانية</text>
+    <rect x="20" y="66" width="175" height="10" rx="5" fill="#064E3B" />
+    <rect x="20" y="66" width="155" height="10" rx="5" fill="#10B981" />
+  </g>
+
+  <!-- Floating UI Card 2: Bottom Left -->
+  <g filter="url(#dropShadow)" transform="translate(48, 295)">
+    <rect x="0" y="0" width="220" height="104" rx="20" fill="url(#cardGlass)" stroke="#60A5FA" stroke-opacity="0.5" stroke-width="1.5" />
+    <text x="198" y="32" font-family="sans-serif" font-size="12" font-weight="bold" fill="#60A5FA" text-anchor="end">مسح القوائم بالذكاء الاصطناعي</text>
+    <text x="198" y="52" font-family="sans-serif" font-size="10" fill="#E2E8F0" text-anchor="end">✓ استخراج ومراجعة فورية للتلاميذ</text>
+    <text x="198" y="72" font-family="sans-serif" font-size="10" fill="#34D399" text-anchor="end">✓ مزامنة سحابية آمنة 100%</text>
+  </g>
+
+  <!-- Bottom Desk Surface -->
+  <path d="M 90 460 L 710 460 L 760 520 L 40 520 Z" fill="#1E293B" opacity="0.7" stroke="#475569" stroke-width="1.5" />
+</svg>
