@@ -442,7 +442,7 @@ export default function App() {
           ...authUser,
           uid,
           isActive,
-          isAdmin: userProf?.role === 'admin' || isAdmin
+          isAdmin
         };
 
         if (isMounted) {
@@ -457,7 +457,7 @@ export default function App() {
       // نتحقق من الجلسة النشطة المحفوظة في sessionStorage طوال فترة فتح المتصفح الحالية
       const savedSessionUser = getSavedSessionUser();
       if (savedSessionUser && savedSessionUser.email) {
-        const isAdmin = savedSessionUser.isAdmin || savedSessionUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        const isAdmin = savedSessionUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
         const uid = savedSessionUser.uid || emailToDocKey(savedSessionUser.email);
 
         try {
@@ -473,7 +473,7 @@ export default function App() {
             ...savedSessionUser,
             uid,
             isActive,
-            isAdmin: userProf?.role === 'admin' || isAdmin
+            isAdmin
           };
 
           if (isMounted) {
@@ -1018,14 +1018,16 @@ export default function App() {
 
     saveBrowserSessionUser(userWithUid);
     setCurrentUser(userWithUid);
-    const isAdmin = userWithUid.isAdmin || userWithUid.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const isAdmin = userWithUid.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    if (!isAdmin) {
+      setIsAdminManagerOpen(false);
+    }
     
     // تسجيل وتحديث الحساب تلقائياً في السيرفر ولوحة التحكم وفي Firestore users/{uid} بالحالة الافتراضية pending للأستاذ الجديد
     await registerOrUpdateGoogleUser(userWithUid);
     const userProfDoc = await fetchOrCreateUserProfileInFirestore(userWithUid);
 
     if (isAdmin) {
-      localStorage.setItem('smart_notebook_is_admin_device', 'true');
       setTeacherProfile(prev => ({
         ...prev,
         name: 'الأستاذ المشرف djazild'
@@ -1075,15 +1077,16 @@ export default function App() {
     setCurrentUser(user);
     saveBrowserSessionUser(user);
     if (user) {
-      const isAdmin = user.isAdmin || user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-      if (isAdmin) {
-        localStorage.setItem('smart_notebook_is_admin_device', 'true');
+      const isAdmin = user.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
+      if (!isAdmin) {
+        setIsAdminManagerOpen(false);
       }
       const access = checkTeacherFeatureAccess(user.email);
       if (!access.hasAccess) {
         setIsWelcomeWizardOpen(false);
       }
     } else {
+      setIsAdminManagerOpen(false);
       setIsWelcomeWizardOpen(false);
       setIsParentPreviewOpen(false);
     }
@@ -1093,6 +1096,7 @@ export default function App() {
   const handleLogout = async () => {
     saveBrowserSessionUser(null);
     setCurrentUser(null);
+    setIsAdminManagerOpen(false);
     try {
       if (auth.currentUser && !auth.currentUser.isAnonymous) {
         await signOut(auth);
@@ -2018,18 +2022,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             setIsParentPreviewOpen(false);
             handleGoogleSignIn(user);
           }}
-          onOpenAdminPanel={() => {
-            localStorage.setItem('smart_notebook_is_admin_device', 'true');
-            setIsAdminManagerOpen(true);
-          }}
         />
-        {isAdminManagerOpen && (
-          <AdminSubscriptionManager
-            currentUser={currentUser || ADMIN_USER}
-            onClose={() => setIsAdminManagerOpen(false)}
-            onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
-          />
-        )}
       </div>
     );
   }
@@ -2054,9 +2047,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
         <h2 className="text-base font-bold text-white mb-1">جارٍ استعادة بيانات الأستاذ والتأكد من إعدادات الحساب...</h2>
         <p className="text-xs text-slate-400">الدفتر اليومي الذكي للأستاذ — مزامنة سحابية بنسبة 100%</p>
-        {isAdminManagerOpen && (
+        {isAdminManagerOpen && currentUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
           <AdminSubscriptionManager
-            currentUser={currentUser || ADMIN_USER}
+            currentUser={currentUser}
             onClose={() => setIsAdminManagerOpen(false)}
             onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
           />
@@ -2096,18 +2089,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           }}
           onLogout={handleLogout}
           onRefreshSubscriptionStatus={() => setSubscriptionRefreshTick(t => t + 1)}
-          onOpenAdminPanel={() => {
-            localStorage.setItem('smart_notebook_is_admin_device', 'true');
-            setIsAdminManagerOpen(true);
-          }}
         />
-        {isAdminManagerOpen && (
-          <AdminSubscriptionManager
-            currentUser={currentUser || ADMIN_USER}
-            onClose={() => setIsAdminManagerOpen(false)}
-            onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
-          />
-        )}
       </div>
     );
   }
@@ -2144,9 +2126,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             return ok;
           }}
         />
-        {isAdminManagerOpen && (
+        {isAdminManagerOpen && currentUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
           <AdminSubscriptionManager
-            currentUser={currentUser || ADMIN_USER}
+            currentUser={currentUser}
             onClose={() => setIsAdminManagerOpen(false)}
             onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
           />
@@ -2198,7 +2180,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
             <span className="text-[10px] text-emerald-400 font-bold hidden sm:inline" title="محفوظ سحابياً">✓</span>
           )}
 
-          {(currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+          {currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
             <button
               onClick={() => setIsAdminManagerOpen(true)}
               className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-md shadow-emerald-600/30 cursor-pointer min-h-[36px]"
@@ -2298,7 +2280,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 <span className="text-[10px] text-blue-400 font-mono">{currentUser?.email}</span>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
-                {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+                {currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
                   <button
                     onClick={() => {
                       setIsAdminManagerOpen(true);
@@ -2414,7 +2396,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
           <div className="text-[11px] text-slate-400 truncate">{teacherProfile.highSchool}</div>
 
           <div className="pt-2 flex flex-col gap-1.5">
-            {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+            {currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
               <button
                 onClick={() => setIsAdminManagerOpen(true)}
                 className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-900/90 to-teal-900/90 hover:from-emerald-800 hover:to-teal-800 border border-emerald-500/40 text-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md"
@@ -2727,7 +2709,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                 </div>
               </div>
 
-              {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+              {currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
                 <button
                   onClick={() => setIsAdminManagerOpen(true)}
                   title="لوحة تحكم المشرف وإدارة اشتراكات الأساتذة"
@@ -2978,7 +2960,7 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
                       <span>التدرج السنوي والمذكرات</span>
                     </button>
 
-                    {(currentUser?.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || localStorage.getItem('smart_notebook_is_admin_device') === 'true' || currentUser?.isAdmin) && (
+                    {currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
                       <button
                         onClick={() => setIsAdminManagerOpen(true)}
                         className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white font-black text-xs transition border border-emerald-400/40 flex items-center gap-1.5 shadow-lg shadow-emerald-700/25 cursor-pointer"
@@ -7485,9 +7467,9 @@ ${st.parentRecommendations || 'الحرص على حل التمارين التط�
         </div>
       )}
 
-      {isAdminManagerOpen && (
+      {isAdminManagerOpen && currentUser?.email?.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && (
         <AdminSubscriptionManager
-          currentUser={currentUser || ADMIN_USER}
+          currentUser={currentUser}
           onClose={() => setIsAdminManagerOpen(false)}
           onSubscriptionUpdated={() => setSubscriptionRefreshTick(t => t + 1)}
         />

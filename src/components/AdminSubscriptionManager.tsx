@@ -65,8 +65,13 @@ export default function AdminSubscriptionManager({
   const [manualPlan, setManualPlan] = useState<SubscriptionPlanId>('lifetime');
   const [isAddingManual, setIsAddingManual] = useState(false);
 
-  // مزامنة الاشتراكات وسجل التدقيق
+  const isStrictMainAdmin = Boolean(
+    currentUser?.email && currentUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
+
+  // مزامنة الاشتراكات وسجل التدقيق (فقط للمشرف الرئيسي djazild@gmail.com)
   useEffect(() => {
+    if (!isStrictMainAdmin) return;
     let isMounted = true;
 
     // جلب أولي شامل من السحابة والسيرفر بهدوء دون إطلاق حلقة أحداث خارجية
@@ -144,7 +149,7 @@ export default function AdminSubscriptionManager({
       unsub();
       window.removeEventListener('smart_notebook_subscriptions_updated', handleLocalUpdate);
     };
-  }, []);
+  }, [isStrictMainAdmin]);
 
   const reloadData = async () => {
     setIsSyncing(true);
@@ -340,6 +345,10 @@ export default function AdminSubscriptionManager({
   const pendingCount = list.filter(s => s.status === 'pending' || s.status === 'none').length;
   const activeCount = list.filter(s => s.status === 'active').length;
   const suspendedCount = list.filter(s => s.status === 'suspended').length;
+
+  if (!isStrictMainAdmin) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 dir-rtl">

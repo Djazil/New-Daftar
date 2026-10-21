@@ -330,17 +330,8 @@ export default function LandingPage({ classes, onGoogleSignIn, onOpenAdminPanel 
               theme="dark"
             />
 
-            {/* أزرار الدخول السريع في الهاتف */}
+            {/* زر الدخول السريع في الهاتف */}
             <div className="flex sm:hidden items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleAdminButtonClick}
-                className="bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-2.5 py-2 rounded-xl transition flex items-center gap-1 shadow-sm whitespace-nowrap cursor-pointer"
-                title="فتح لوحة تحكم المشرف وإدارة الاشتراكات"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-                <span>لوحة المشرف</span>
-              </button>
               <button
                 type="button"
                 onClick={() => setShowGoogleModal(true)}
@@ -384,18 +375,8 @@ export default function LandingPage({ classes, onGoogleSignIn, onOpenAdminPanel 
               </button>
             </div>
 
-            {/* أزرار الدخول ولوحة المشرف على الشاشات المتوسطة والكبيرة */}
+            {/* زر الدخول على الشاشات المتوسطة والكبيرة */}
             <div className="hidden sm:flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleAdminButtonClick}
-                className="bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm whitespace-nowrap cursor-pointer"
-                title="فتح لوحة تحكم المشرف وإدارة اشتراكات الأساتذة"
-              >
-                <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-400" />
-                <span>لوحة المشرف</span>
-              </button>
-
               <button
                 type="button"
                 onClick={() => setShowGoogleModal(true)}
@@ -1386,24 +1367,8 @@ export default function LandingPage({ classes, onGoogleSignIn, onOpenAdminPanel 
             subtitle="للتعليم الثانوي الجزائري • إصدار 2026/2027"
             theme="dark"
           />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleAdminButtonClick}
-              className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>لوحة تحكم المشرف</span>
-            </button>
-            {isAdminDevice && (
-              <button
-                type="button"
-                onClick={handleAdminLogin}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-              >
-                <span>دخول دفتر المشرف</span>
-              </button>
-            )}
+          <div className="text-[11px] text-slate-400">
+            منصة الدفتر اليومي الذكي للأستاذ • جميع الحقوق محفوظة
           </div>
         </div>
       </footer>

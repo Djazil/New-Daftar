@@ -927,14 +927,8 @@ export async function submitSubscriptionRequestAsync(
 }
 
 export function isCallerAuthorized(email?: string): boolean {
-  if (!email) return true;
-  const clean = email.trim().toLowerCase();
-  return (
-    clean === ADMIN_EMAIL.toLowerCase() ||
-    clean === 'hdjazil95@gmail.com' ||
-    clean.includes('admin') ||
-    localStorage.getItem('smart_notebook_is_admin_device') === 'true'
-  );
+  if (!email) return false;
+  return email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
 }
 
 /**

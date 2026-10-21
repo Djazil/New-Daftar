@@ -377,18 +377,6 @@ export default function TeacherAppleLandingPage({
               وصول دائم — 1000 دج
             </span>
 
-            {onOpenAdminPanel && (
-              <button
-                type="button"
-                onClick={onOpenAdminPanel}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                title="فتح لوحة تحكم المشرف"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>لوحة المشرف</span>
-              </button>
-            )}
-
             <button
               onClick={() => setIsPaymentModalOpen(true)}
               className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/25 transition active:scale-95 whitespace-nowrap cursor-pointer"
